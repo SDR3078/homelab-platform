@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*~
+
+# Secrets — if anything ever slips through, it shouldn't end up committed
+*.key
+*.pem
+*.pfx
+*-secret.yaml
+!sealed-*.yaml
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Helm
+charts/**/charts/
