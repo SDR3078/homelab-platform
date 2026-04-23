@@ -1,0 +1,35 @@
+# Root "app of apps" Application
+#
+# Apply this ONCE after ArgoCD is installed:
+#   kubectl apply -f bootstrap/root-app.yaml
+#
+# After this, every Application in apps/ is automatically created
+# and managed by ArgoCD. Changes flow through Git from this point.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/SDR3078/homelab-platform.git
+    targetRevision: main
+    path: apps
+    directory:
+      recurse: true
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
