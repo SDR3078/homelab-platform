@@ -17,7 +17,7 @@ Single-node k3s v1.34.6 running in a Proxmox VM on batzbakserver.
 
 To be populated as sessions progress:
 - [x] k3s cluster bootstrapped
-- [ ] ArgoCD + sealed-secrets (session 1 completion)
+- [x] ArgoCD + sealed-secrets (session 1 completion)
 - [ ] ingress-nginx + cert-manager (session 2)
 - [ ] CloudNativePG + MinIO (session 3)
 - [ ] MLflow (session 4)
