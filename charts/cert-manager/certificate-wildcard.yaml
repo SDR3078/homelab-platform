@@ -1,0 +1,40 @@
+# Wildcard TLS certificate for *.lab.batzbak.top
+#
+# Single source of truth for the wildcard cert used by every internal
+# service. cert-manager issues it via the letsencrypt-staging ClusterIssuer
+# and stores the result as Secret 'wildcard-lab-tls' in this namespace.
+#
+# secretTemplate.annotations tell reflector to copy the Secret to listed
+# service namespaces. As new services come online, append their namespace
+# to the reflection-*-namespaces annotations below.
+#
+# Starts with issuerRef pointing at staging. Once the Certificate
+# transitions to Ready=True, switch issuerRef.name to
+# 'letsencrypt-production' and delete the Secret to force a re-issue
+# against real Let's Encrypt.
+
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wildcard-lab-tls
+  namespace: cert-manager
+spec:
+  secretName: wildcard-lab-tls
+  secretTemplate:
+    annotations:
+      reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
+      reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: "argocd"
+      reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
+      reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "argocd"
+  issuerRef:
+    name: letsencrypt-staging
+    kind: ClusterIssuer
+  dnsNames:
+    - "*.lab.batzbak.top"
+    - "lab.batzbak.top"
+  duration: 2160h
+  renewBefore: 720h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always

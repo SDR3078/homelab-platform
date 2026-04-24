@@ -1,0 +1,35 @@
+# reflector
+#
+# Watches for Secrets/ConfigMaps annotated for reflection, automatically
+# copies them to other namespaces. We use it to propagate the single
+# wildcard TLS Secret (*.lab.batzbak.top) from cert-manager's namespace
+# into every namespace that runs an Ingress referencing it.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: reflector
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://emberstack.github.io/helm-charts
+    chart: reflector
+    targetRevision: 7.1.288
+    helm:
+      releaseName: reflector
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: reflector
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
