@@ -32,7 +32,6 @@ spec:
     kind: ClusterIssuer
   dnsNames:
     - "*.lab.batzbak.top"
-    - "lab.batzbak.top"
   duration: 2160h
   renewBefore: 720h
   privateKey:
