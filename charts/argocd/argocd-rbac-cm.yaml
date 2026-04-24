@@ -1,0 +1,41 @@
+# ArgoCD RBAC policy — patches argocd-rbac-cm
+#
+# Format: Casbin-flavored CSV. Line types:
+#   p, <role>, <resource>, <action>, <object>, <effect>   # policy definition
+#   g, <account>, <role>                                  # role assignment
+#
+# Built-in roles (don't need to be defined here):
+#   role:admin     — full access, all resources, all actions
+#   role:readonly  — get/list only; all mutations denied
+#
+# policy.default sets the role for any account not otherwise bound.
+#
+# Explicit `g,` lines override/restate the default for documentation
+# clarity, even when strictly redundant — reads as intentional intent
+# rather than a fall-through.
+#
+# Full RBAC reference:
+#   https://argo-cd.readthedocs.io/en/stable/operator-manual/rbac/
+#
+# ----------------------------------------------------------------------
+# Adding a new account's permissions
+# ----------------------------------------------------------------------
+# - For readonly: rely on policy.default, or add `g, <name>, role:readonly`
+# - For admin:    add `g, <name>, role:admin`
+# - For custom:   define a role with `p,` line(s), then `g,` to bind it
+#     p, role:ci-deployer, applications, sync, */*, allow
+#     p, role:ci-deployer, applications, get,  */*, allow
+#     g, ci, role:ci-deployer
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-rbac-cm
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-rbac-cm
+    app.kubernetes.io/part-of: argocd
+data:
+  policy.default: role:readonly
+  policy.csv: |
+    g, homepage, role:readonly

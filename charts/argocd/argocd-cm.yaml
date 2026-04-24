@@ -1,0 +1,59 @@
+# ArgoCD server configuration — patches argocd-cm
+#
+# The argocd-cm ConfigMap is installed empty by the ArgoCD bootstrap
+# manifest specifically so that additional config can be layered in.
+# We declare local accounts here (admin is always present regardless).
+#
+# Capabilities per account:
+#   apiKey = can generate API tokens for automation / dashboards
+#   login  = can authenticate with username+password (omit = token-only)
+#
+# ----------------------------------------------------------------------
+# Token lifecycle operations (run from devbox; replace <name> as needed)
+# ----------------------------------------------------------------------
+#
+# 1. Log in to ArgoCD CLI as admin (one-time per shell):
+#      argocd login argocd.lab.batzbak.top
+#
+# 2. Generate a new token:
+#      argocd account generate-token --account <name>
+#    Add --expires-in 365d for rotation-aware tokens.
+#    Copy the JWT output immediately — ArgoCD does NOT store the
+#    plaintext and cannot recover it later.
+#
+# 3. List existing token IDs (for rotation):
+#      argocd account get --account <name>
+#
+# 4. Revoke a specific token:
+#      argocd account delete-token --account <name> --id <token-id>
+#
+# 5. Verify scope after issuing (readonly example):
+#      export TOKEN=<jwt>
+#      argocd --auth-token $TOKEN app list         # should succeed
+#      argocd --auth-token $TOKEN app sync <any>   # should be denied
+#
+# 6. Plug the token into the consumer (Homepage, CI, etc.). For in-
+#    cluster consumers, store the token in a SealedSecret — never
+#    commit the raw JWT.
+#
+# ----------------------------------------------------------------------
+# Adding a new account
+# ----------------------------------------------------------------------
+# - Append a line under `data:` here: `accounts.<name>: apiKey` (or
+#   `apiKey, login` for UI-accessible accounts)
+# - If `login` is set, the account needs a password:
+#     argocd account update-password --account <name> \
+#       --current-password <admin-pass> --new-password <new>
+# - Grant a role in argocd-rbac-cm.yaml (sibling file)
+# - Commit → ArgoCD syncs → account is live
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-cm
+    app.kubernetes.io/part-of: argocd
+data:
+  accounts.homepage: apiKey
