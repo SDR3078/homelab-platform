@@ -8,10 +8,11 @@
 # service namespaces. As new services come online, append their namespace
 # to the reflection-*-namespaces annotations below.
 #
-# Starts with issuerRef pointing at staging. Once the Certificate
-# transitions to Ready=True, switch issuerRef.name to
-# 'letsencrypt-production' and delete the Secret to force a re-issue
-# against real Let's Encrypt.
+# issuerRef points at letsencrypt-production (real browser-trusted certs).
+# Switched from -staging after verifying the ACME pipeline worked end-to-end.
+# Re-issuance is forced by deleting the Secret 'wildcard-lab-tls' in this
+# namespace; cert-manager then reconciles and requests a fresh cert from
+# production.
 
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -27,7 +28,7 @@ spec:
       reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
       reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "argocd"
   issuerRef:
-    name: letsencrypt-staging
+    name: letsencrypt-production
     kind: ClusterIssuer
   dnsNames:
     - "*.lab.batzbak.top"
