@@ -1,0 +1,37 @@
+# cert-manager configuration
+#
+# Watches charts/cert-manager/ in this repo and applies every resource
+# found there. Currently manages:
+#   - SealedSecret 'cloudflare-api-token' (the Cloudflare DNS API credential)
+#   - ClusterIssuer 'letsencrypt-staging' / 'letsencrypt-production'
+#
+# Separate from the cert-manager Application (which installs the operator
+# itself via Helm) so that the operator deploys cleanly before any custom
+# resources that require its CRDs.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cert-manager-config
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/SDR3078/homelab-platform.git
+    targetRevision: main
+    path: charts/cert-manager
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cert-manager
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
