@@ -55,3 +55,17 @@ spec:
         duration: 5s
         factor: 2
         maxDuration: 3m
+
+  # Ignore fields whose last writer was the CNPG operator's field manager
+  # (its default name is "manager"). The operator post-applies dozens of
+  # default fields onto the Cluster spec — bootstrap.initdb.encoding,
+  # affinity, monitoring, replicationSlots, ~30 postgres parameters, etc.
+  # ArgoCD's diff would flag these as "drift" indefinitely, even though
+  # ServerSideApply correctly partitions ownership and there's no actual
+  # fight. This rule scopes ArgoCD's diff to fields WE own, leaving
+  # operator-managed defaults out of scope.
+  ignoreDifferences:
+    - group: postgresql.cnpg.io
+      kind: Cluster
+      managedFieldsManagers:
+        - manager
