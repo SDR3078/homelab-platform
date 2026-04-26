@@ -56,16 +56,28 @@ spec:
         factor: 2
         maxDuration: 3m
 
-  # Ignore fields whose last writer was the CNPG operator's field manager
-  # (its default name is "manager"). The operator post-applies dozens of
-  # default fields onto the Cluster spec — bootstrap.initdb.encoding,
-  # affinity, monitoring, replicationSlots, ~30 postgres parameters, etc.
-  # ArgoCD's diff would flag these as "drift" indefinitely, even though
-  # ServerSideApply correctly partitions ownership and there's no actual
-  # fight. This rule scopes ArgoCD's diff to fields WE own, leaving
-  # operator-managed defaults out of scope.
+  # The CNPG operator post-applies dozens of default fields onto the
+  # Cluster spec (bootstrap.initdb.encoding, affinity, monitoring,
+  # replicationSlots, ~25 postgres parameters, etc.) using legacy
+  # update-style writes — NOT ServerSideApply. That makes
+  # 'managedFieldsManagers' filtering ineffective (it only works for
+  # Apply operations), so we fall back to a path-based ignore.
+  #
+  # Ignoring the entire .spec subtree at DIFF time:
+  #   - ArgoCD still APPLIES our Git desired state via SSA on every sync
+  #     (selfHeal + automated). Field ownership is intact: argocd-controller
+  #     owns fields we declared; the operator owns the rest.
+  #   - We give up the UI's drift indicator on Cluster spec (a real cost,
+  #     but unavoidable for operator-managed CRDs at our scale).
+  #   - Changes to OUR managed fields (instances, imageName, storage size,
+  #     postgresql parameters, managed.roles, resources) still flow from
+  #     Git → cluster on each sync — the diff just isn't shown in the UI.
+  #
+  # If a Cluster-level change ever DOES need explicit verification, run
+  # 'kubectl diff -f charts/data-platform/postgres-cluster.yaml' from the
+  # devbox to see the actual delta.
   ignoreDifferences:
     - group: postgresql.cnpg.io
       kind: Cluster
-      managedFieldsManagers:
-        - manager
+      jqPathExpressions:
+        - .spec
