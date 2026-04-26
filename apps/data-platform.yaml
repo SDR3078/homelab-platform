@@ -1,0 +1,57 @@
+# data-platform — namespace + data-plane workloads
+#
+# Single ArgoCD Application that owns everything in the data-platform
+# namespace:
+#   - the Namespace itself (declared in Git, not a CreateNamespace=true
+#     side-effect; carries Pod Security Admission labels and well-known
+#     metadata labels)
+#   - CNPG Cluster + Database resources (postgres for mlflow / dagster /
+#     lakekeeper databases)                                                 [coming this session]
+#   - MinIO Tenant + bucket declarations (iceberg-warehouse,
+#     mlflow-artifacts, raw-data)                                           [coming this session]
+#
+# Bundled rather than split into per-component Applications because at our
+# scale these are co-evolving data-plane infrastructure with a shared
+# lifecycle. If postgres and MinIO ever need independent sync cadence
+# (e.g., upgrading CNPG without touching MinIO), this Application splits
+# cleanly into 'cnpg-cluster.yaml' + 'minio-tenant.yaml' by moving files
+# into separate chart subdirectories. No data migration; just reorganizing
+# YAML.
+#
+# NOT setting CreateNamespace=true. The Namespace is declared explicitly
+# in charts/data-platform/namespace.yaml so it's first-class in Git and
+# can carry meaningful labels. ArgoCD applies cluster-scoped resources
+# (like Namespace) first by default kind priority, so the Namespace is
+# created before any namespaced resource that targets it.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: data-platform
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/SDR3078/homelab-platform.git
+    targetRevision: main
+    path: charts/data-platform
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: data-platform
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

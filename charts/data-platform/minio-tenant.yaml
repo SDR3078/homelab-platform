@@ -1,0 +1,184 @@
+# MinIO Tenant for the data plane
+#
+# One MinIO instance ('minio-data-platform') with three pre-created
+# buckets: iceberg-warehouse, mlflow-artifacts, raw-data. Standalone
+# mode (1 server × 1 volume × 20Gi) — appropriate for single-node k3s.
+# Production deployments would use 4+ servers × 4+ volumes per server
+# for erasure coding.
+#
+# What this file declares:
+#   1× Tenant         — the MinIO instance, its pool, and bucket list
+#
+# What the operator auto-materializes:
+#   StatefulSet 'minio-data-platform-pool-0', PVCs (data0-...-pool-0-0),
+#   Services (minio-data-platform, -console, -hl), TLS Secrets
+#   (auto-cert via requestAutoCert: true), ConfigMap, PodDisruptionBudget.
+#
+# Cluster-internal endpoints (used by MLflow / Dagster / Lakekeeper later):
+#   API:      https://minio-data-platform.data-platform.svc.cluster.local
+#   Console:  https://minio-data-platform-console.data-platform.svc.cluster.local:9443
+#
+# These use the operator's auto-generated CA. In-cluster clients trust
+# the cluster's CA; external Ingress (TBD, deferred to a later session)
+# would terminate at our reflected wildcard cert.
+#
+# Sync-wave: this file lives in the data-platform Application
+# (sync-wave 1), applied after the minio-operator Application
+# (sync-wave 0) registered the Tenant CRD.
+#
+# ────────────────────────────────────────────────────────────────────────
+# OPERATIONS RUNBOOK — root credentials
+# ────────────────────────────────────────────────────────────────────────
+# The Tenant references Secret 'minio-root-credentials' for the root
+# user/password. Format expected: a 'config.env' key containing env-var
+# style declarations.
+#
+# From the devbox:
+#
+#   # 1. Generate a strong password
+#   pw=$(openssl rand -base64 32 | tr -d '=+/' | head -c 32)
+#
+#   # 2. Construct the env-format config (NOT committed)
+#   cat > /tmp/minio-root.env <<EOF
+#   export MINIO_ROOT_USER=admin
+#   export MINIO_ROOT_PASSWORD=${pw}
+#   EOF
+#
+#   # 3. Build a regular Secret from it (still NOT committed)
+#   kubectl create secret generic minio-root-credentials \
+#     --namespace data-platform \
+#     --from-file=config.env=/tmp/minio-root.env \
+#     --dry-run=client -o yaml > /tmp/minio-root-credentials.yaml
+#
+#   # 4. Encrypt with kubeseal → committable SealedSecret
+#   kubeseal -f /tmp/minio-root-credentials.yaml \
+#     -w charts/data-platform/minio-root-credentials-sealed.yaml \
+#     --controller-name=sealed-secrets-controller \
+#     --controller-namespace=sealed-secrets
+#
+#   # 5. Save plaintext to password manager: "homelab-platform / minio-root"
+#
+#   # 6. Shred temp files
+#   shred -u /tmp/minio-root.env /tmp/minio-root-credentials.yaml
+#
+#   # 7. Commit minio-root-credentials-sealed.yaml. ArgoCD picks up;
+#   #    sealed-secrets controller decrypts; real Secret appears;
+#   #    MinIO operator creates pods with these credentials.
+#
+# Rotation: regenerate password, reseal, commit. Note: changing root
+# credentials on an existing Tenant requires manually updating the
+# in-cluster Secret + restarting MinIO pods. Not a hot-rotate.
+# ────────────────────────────────────────────────────────────────────────
+
+---
+apiVersion: minio.min.io/v2
+kind: Tenant
+metadata:
+  name: minio-data-platform
+  namespace: data-platform
+  labels:
+    app.kubernetes.io/name: minio-data-platform
+    app.kubernetes.io/part-of: homelab-platform
+spec:
+  # MinIO server image. Pinned explicitly; matches what the operator
+  # 7.1.x charts vet as compatible. Bump together with operator upgrades.
+  image: quay.io/minio/minio:RELEASE.2025-04-08T15-41-24Z
+  imagePullPolicy: IfNotPresent
+
+  # Where MinIO stores data inside the pod (mount point on the PVC).
+  mountPath: /export
+
+  # Reference to the Secret containing root user + password.
+  # Created via the kubeseal procedure in the runbook above.
+  configuration:
+    name: minio-root-credentials
+
+  # Auto-generate a Kubernetes-CSR-signed CA + server cert for the
+  # Tenant's API/console. Covers cluster-internal DNS hostnames only —
+  # external Ingress (when added) terminates at the reflected wildcard
+  # cert, then re-encrypts to the Tenant's auto-cert via Ingress
+  # 'backend-protocol: HTTPS' annotation (same pattern as ArgoCD
+  # in session 2).
+  requestAutoCert: true
+
+  # Faster startup; pods come up in parallel rather than ordinally.
+  # Safe with 1 server (no replication ordering to preserve).
+  podManagementPolicy: Parallel
+
+  # Pool definition — for our standalone single-node setup, one pool
+  # with one server and one volume.
+  pools:
+    - name: pool-0
+
+      # Servers = MinIO pods in this pool. Distributed mode requires
+      # 4+; standalone supports 1. Note: the operator does NOT support
+      # upgrading from standalone to distributed in place, so picking 1
+      # is a one-way door at this Tenant's scale (a fresh Tenant on
+      # multi-node would replace this one).
+      servers: 1
+
+      # Volumes (PVCs) per pod. Erasure coding requires multiple drives
+      # per server; standalone uses 1.
+      volumesPerServer: 1
+
+      # PVC spec for each volume. 20Gi headroom for ML artifacts,
+      # Iceberg files, and ingested datasets. Local-path provisioner
+      # (k3s default, single-node only).
+      volumeClaimTemplate:
+        metadata:
+          name: data
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          storageClassName: local-path
+          resources:
+            requests:
+              storage: 20Gi
+
+      # Pod resources. MinIO is reasonably efficient at standalone
+      # scale; 512Mi handles our expected workload comfortably.
+      # Memory limit set; CPU limit intentionally omitted (consistent
+      # with the rest of the platform — CPU throttling under burst is
+      # worse than letting the pod use idle CPU).
+      resources:
+        requests:
+          cpu: 250m
+          memory: 512Mi
+        limits:
+          memory: 1Gi
+
+      # Pod-level security context. MinIO operator defaults are
+      # restricted-PSS compliant: non-root user, fsGroup for volume
+      # ownership, fsGroupChangePolicy=OnRootMismatch (skips recursive
+      # chown on every restart — much faster on volumes with many small
+      # files).
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+
+      # Container-level security context. Restricted-PSS compliant:
+      # drops all capabilities, no privilege escalation, RuntimeDefault
+      # seccomp profile. This is why our namespace's
+      # 'pod-security.kubernetes.io/enforce: baseline' label admits
+      # these pods cleanly.
+      containerSecurityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: RuntimeDefault
+
+  # Buckets created during Tenant provisioning. Operator v5+ supports
+  # this declaratively (no separate Job needed). Idempotent — adding
+  # a bucket later is a YAML edit + commit.
+  buckets:
+    - name: iceberg-warehouse
+    - name: mlflow-artifacts
+    - name: raw-data

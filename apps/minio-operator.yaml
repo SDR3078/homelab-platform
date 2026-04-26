@@ -1,0 +1,90 @@
+# minio-operator — MinIO operator install
+#
+# Deploys the MinIO operator (controller pod + CRDs) into the
+# minio-operator namespace. The operator manages Tenant resources;
+# each Tenant becomes a MinIO object-storage cluster (in our case,
+# a single Tenant declared in the data-platform namespace).
+#
+# Operator pod runs in minio-operator. The Tenant itself (a MinIO
+# instance) lives wherever it's declared — for us, in data-platform.
+# Standard operator pattern: controller separated from managed resources.
+#
+# Sync-wave 0 (explicit, default): this Application must be Synced+Healthy
+# before the data-platform Application (sync-wave 1) tries to apply a
+# Tenant resource, since the Tenant CRD is registered by this chart.
+#
+# Note: in operator v7.x, the standalone web console UI was decoupled from
+# the operator chart. We don't deploy a separate console — instead, each
+# Tenant has its own embedded console accessible at
+# 'https://minio-<tenant>-console.<ns>.svc.cluster.local'. We'll Ingress
+# that for our data-platform tenant alongside the Tenant declaration.
+#
+# Operations runbook:
+#   - Upgrade: bump targetRevision, commit, ArgoCD picks up. Operator
+#     supports rolling upgrades; existing Tenants keep running.
+#   - Tenant image-version upgrades are declared on the Tenant resource
+#     itself, not on the operator chart.
+#   - Uninstalling this Application without first removing all Tenants
+#     leaves them stuck (their reconciler is gone). Always remove Tenants
+#     first, operator second.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: minio-operator
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://operator.min.io
+    chart: operator
+    targetRevision: 7.1.1
+    helm:
+      releaseName: minio-operator
+      values: |
+        operator:
+          # Single replica for our single-node k3s cluster. Default is 2
+          # with required pod-anti-affinity (different nodes), which
+          # would render the second pod unschedulable on a single-node
+          # cluster.
+          replicaCount: 1
+
+          # Resources for the operator pod. The operator is mostly idle —
+          # only active when reconciling Tenant changes (creation,
+          # version upgrades, scale operations).
+          #
+          # Memory + ephemeral-storage limits set; CPU limit intentionally
+          # omitted (matches our pattern from cloudnative-pg.yaml and
+          # ingress-nginx.yaml — CPU throttling under burst is worse than
+          # letting the pod use idle CPU).
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+              ephemeral-storage: 500Mi
+            limits:
+              memory: 256Mi
+              ephemeral-storage: 1Gi
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: minio-operator
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

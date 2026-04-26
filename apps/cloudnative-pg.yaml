@@ -1,0 +1,89 @@
+# cloudnative-pg — CNPG operator install
+#
+# Deploys the CloudNativePG operator (controller pod + CRDs) into the
+# cnpg-system namespace. CRDs registered: Cluster, Pooler, Backup,
+# ScheduledBackup, Database, Publication, Subscription, ImageCatalog.
+#
+# Once this is Synced+Healthy, the data-platform Application can declare
+# Cluster + Database resources that this operator will reconcile into
+# real running postgres pods.
+#
+# Operator pod runs in cnpg-system. The postgres instances themselves
+# (Cluster resources) live wherever they're declared — for us, in the
+# data-platform namespace. Standard operator pattern: controller separate
+# from managed resources.
+#
+# Sync-wave 0 (explicit, default would be the same): this Application
+# must finish syncing before the data-platform Application (sync-wave 1)
+# tries to apply a Cluster, since the Cluster CRD comes from this chart.
+#
+# Operations runbook:
+#   - Upgrade: bump targetRevision, commit, ArgoCD picks up. Operator
+#     supports rolling upgrades; existing Cluster resources keep running.
+#   - Postgres major-version upgrade is a separate concern, declared on
+#     the Cluster resource itself, not the operator chart.
+#   - Uninstalling this Application without first removing all Cluster
+#     resources will leave them stuck (the operator they need is gone).
+#     Always prune Clusters first, operator second.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cloudnative-pg
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://cloudnative-pg.github.io/charts
+    chart: cloudnative-pg
+    targetRevision: 0.28.0
+    helm:
+      releaseName: cnpg
+      values: |
+        # Install the CRDs (Cluster, Pooler, Backup, ScheduledBackup,
+        # Database, Publication, Subscription, ImageCatalog) as part of
+        # this chart. Default is true; explicit for documentation.
+        crds:
+          create: true
+
+        # Operator pod replicas. Single-node k3s, so 1 is appropriate.
+        # Multi-node HA would run 2-3 with leader election.
+        replicaCount: 1
+
+        # Resources for the operator pod itself. Note: this does NOT
+        # size the postgres pods — those are sized on each Cluster
+        # resource independently. The operator is mostly idle (only
+        # active during reconciliation events) so requests are small.
+        #
+        # Memory limit is set; CPU limit is intentionally NOT set,
+        # following Kubernetes guidance that CPU throttling under load
+        # is worse than letting a pod use idle CPU.
+        resources:
+          requests:
+            cpu: 50m
+            memory: 100Mi
+          limits:
+            memory: 256Mi
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cnpg-system
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

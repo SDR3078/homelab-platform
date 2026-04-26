@@ -1,0 +1,187 @@
+# CNPG Cluster + per-database resources for the data plane
+#
+# One Postgres instance ('postgres-data-platform') with three logical
+# databases (mlflow, dagster, lakekeeper). Each database has its own
+# owner role, isolated by Postgres-level permissions. Roles' passwords
+# are sealed into Git as separate SealedSecret resources alongside this
+# file.
+#
+# What this file declares:
+#   1× Cluster        — the Postgres instance (1 pod, 10Gi PVC, tuned for ~1Gi memory budget)
+#   3× Database       — declarative CREATE DATABASE for each logical database
+#
+# What CNPG auto-materializes (NOT in this file):
+#   StatefulSet, PVC, Services (-rw, -ro, -r), Secrets (superuser, app,
+#   server-cert, ca, client-cert), ConfigMap, PodDisruptionBudget.
+#
+# Sync-wave: this file lives in the data-platform Application (sync-wave 1),
+# so it applies after the cloudnative-pg Application (sync-wave 0)
+# registered the CRDs.
+#
+# ────────────────────────────────────────────────────────────────────────
+# OPERATIONS RUNBOOK — credentials for each role
+# ────────────────────────────────────────────────────────────────────────
+# The 'managed.roles' block below references three Secrets:
+#   mlflow-credentials, dagster-credentials, lakekeeper-credentials
+#
+# These Secrets must exist before CNPG can create the corresponding roles.
+# We seal them into Git as SealedSecrets. From the devbox:
+#
+#   # 1. Generate a strong password for each role
+#   for role in mlflow dagster lakekeeper; do
+#     pw=$(openssl rand -base64 32 | tr -d '=+/' | head -c 32)
+#
+#     # 2. Construct a regular Secret manifest (NOT committed)
+#     kubectl create secret generic "${role}-credentials" \
+#       --namespace data-platform \
+#       --from-literal=username="${role}" \
+#       --from-literal=password="${pw}" \
+#       --dry-run=client -o yaml > "/tmp/${role}-credentials.yaml"
+#
+#     # 3. Encrypt with kubeseal → produces a SealedSecret safe for Git
+#     kubeseal -f "/tmp/${role}-credentials.yaml" \
+#       -w "charts/data-platform/${role}-credentials-sealed.yaml" \
+#       --controller-name=sealed-secrets-controller \
+#       --controller-namespace=sealed-secrets
+#
+#     # 4. Save the plaintext password to a password manager entry under
+#     #    "homelab-platform / postgres-${role}". The role's owner (this
+#     #    operator, future you) needs it to populate the consumer's
+#     #    connection-string sealed secret in sessions 4-6.
+#
+#     # 5. Clean up the plaintext (avoid shell-history leak)
+#     shred -u "/tmp/${role}-credentials.yaml"
+#   done
+#
+#   # 6. Commit the three *-credentials-sealed.yaml files. ArgoCD picks
+#   #    them up; sealed-secrets controller decrypts them in-cluster;
+#   #    real Secrets appear in data-platform; CNPG sees the Secrets and
+#   #    creates the roles with those passwords.
+#
+# Rotation: regenerate the password, reseal, commit. CNPG's role
+# reconciler picks up the new password and runs ALTER ROLE on next sync.
+# ────────────────────────────────────────────────────────────────────────
+
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: postgres-data-platform
+  namespace: data-platform
+spec:
+  # Single instance — no streaming replication. On single-node k3s,
+  # additional replicas would all schedule to the same node, gaining
+  # no HA. Bump to 3 when (if) we go multi-node.
+  instances: 1
+
+  # Pin Postgres image explicitly. This is CNPG 1.29.0's default,
+  # captured here so a reviewer sees the PG version at the YAML level
+  # without checking operator source.
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.3-system-trixie
+
+  # Each instance gets a 10Gi PVC at /var/lib/postgresql/data on the
+  # k3s 'local-path' provisioner (single-node only — multi-node would
+  # require Longhorn or similar replicated storage class).
+  storage:
+    size: 10Gi
+    storageClass: local-path
+
+  # Postgres pod sizing. Memory budget: 1Gi limit, 512Mi requested.
+  # Allocated breakdown: shared_buffers (256Mi) + work_mem × concurrent
+  # ops + maintenance_work_mem + backend processes ≈ 600-700Mi typical.
+  # CPU limit intentionally omitted (CPU throttling under burst is
+  # worse than letting the pod use idle CPU).
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 1Gi
+
+  # Postgres parameters. CNPG renders postgresql.conf from this map.
+  postgresql:
+    parameters:
+      # Postgres's own buffer pool — ALLOCATED upfront. ~25% of memory limit.
+      shared_buffers: "256MB"
+
+      # PLANNER HINT only (not allocated) — tells the planner how much
+      # combined PG + OS page cache to assume. ~75% of memory limit.
+      # Affects index-scan vs sequential-scan plan choices.
+      effective_cache_size: "768MB"
+
+      # Per-operation memory for sorts/hashes. Multiplied by concurrent ops.
+      # Conservative; bump if observed query plans spill to disk.
+      work_mem: "8MB"
+
+      # For VACUUM, CREATE INDEX, ALTER TABLE — generous because these
+      # run rarely and benefit from completing quickly.
+      maintenance_work_mem: "128MB"
+
+  # Bootstrap (runs once, when the Cluster is first initialized).
+  # Creates the initial 'app' database and 'app' role — placeholders.
+  # Real workload databases come via separate Database resources below.
+  bootstrap:
+    initdb:
+      database: app
+      owner: app
+
+  # Declarative role management. Each entry is a Postgres role; the
+  # operator runs CREATE/ALTER ROLE idempotently. The password lives
+  # in a Secret (sealed into Git — see runbook above).
+  managed:
+    roles:
+      - name: mlflow
+        ensure: present
+        login: true
+        passwordSecret:
+          name: mlflow-credentials
+      - name: dagster
+        ensure: present
+        login: true
+        passwordSecret:
+          name: dagster-credentials
+      - name: lakekeeper
+        ensure: present
+        login: true
+        passwordSecret:
+          name: lakekeeper-credentials
+
+# ────────────────────────────────────────────────────────────────────────
+# Per-database resources — declarative CREATE DATABASE
+# ────────────────────────────────────────────────────────────────────────
+
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: mlflow
+  namespace: data-platform
+spec:
+  cluster:
+    name: postgres-data-platform
+  name: mlflow         # actual database name (CREATE DATABASE mlflow)
+  owner: mlflow        # role from managed.roles above
+
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: dagster
+  namespace: data-platform
+spec:
+  cluster:
+    name: postgres-data-platform
+  name: dagster
+  owner: dagster
+
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: lakekeeper
+  namespace: data-platform
+spec:
+  cluster:
+    name: postgres-data-platform
+  name: lakekeeper
+  owner: lakekeeper

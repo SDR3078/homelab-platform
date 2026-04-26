@@ -1,0 +1,35 @@
+# data-platform namespace
+#
+# Houses platform-internal data services declared in this directory:
+#   - CNPG Cluster (postgres for mlflow / dagster / lakekeeper databases)
+#   - MinIO Tenant (object storage: iceberg-warehouse, mlflow-artifacts, raw-data)
+#
+# CNPG and MinIO operators themselves live elsewhere (cnpg-system,
+# minio-operator namespaces) — controller pods are separated from the
+# resources they manage. Standard operator pattern.
+#
+# Services that consume this namespace's data services (mlflow, dagster,
+# lakekeeper in later sessions) get their own namespaces and reach in via
+# cross-namespace DNS:
+#   postgres-rw.data-platform.svc.cluster.local
+#   minio-tenant.data-platform.svc.cluster.local
+#
+# Pod Security Admission: 'baseline' is enforced — blocks privileged pods,
+# host namespaces, hostPath volumes, etc., while still permitting the
+# fsGroup and non-root user settings CNPG and MinIO need. 'restricted' is
+# set on warn/audit so violations of the tighter level surface in logs
+# without blocking pods, useful for evaluating whether we could tighten
+# enforcement later.
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: data-platform
+  labels:
+    app.kubernetes.io/name: data-platform
+    app.kubernetes.io/part-of: homelab-platform
+    app.kubernetes.io/managed-by: argocd
+
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
