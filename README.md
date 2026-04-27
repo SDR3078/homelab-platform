@@ -36,7 +36,7 @@ To be populated as sessions progress:
 - [x] k3s cluster bootstrapped
 - [x] ArgoCD + sealed-secrets (session 1 completion)
 - [x] ingress-nginx + cert-manager (session 2)
-- [ ] CloudNativePG + MinIO (session 3)
+- [x] CloudNativePG + MinIO (session 3)
 - [ ] MLflow (session 4)
 - [ ] Dagster (session 5)
 - [ ] Lakekeeper + first pipeline (session 6)
