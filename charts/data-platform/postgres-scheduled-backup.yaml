@@ -1,0 +1,73 @@
+# ScheduledBackup — weekly base backup of postgres-data-platform
+#
+# CNPG's ScheduledBackup CRD triggers a base backup on a cron. The WAL
+# archive runs continuously (configured on the Cluster's
+# barmanObjectStore), so PITR granularity is independent of this
+# schedule — we can recover to any second within the retention window
+# regardless of when the last base backup ran.
+#
+# Schedule format is 6-field cron (seconds minutes hours dom month dow),
+# NOT the standard 5-field crontab format. So `0 0 2 * * 0` means
+# Sunday 02:00:00 UTC.
+#
+# `immediate: true` triggers a base backup right when this resource
+# is first applied — gives instant verification of the pipeline rather
+# than waiting until next Sunday.
+#
+# `backupOwnerReference: cluster` makes resulting Backup CRs children
+# of the Cluster — when the Cluster is deleted, K8s garbage-collects
+# the Backup CRs. The actual S3 data persists regardless (CNPG/barman
+# don't reach into the bucket on Cluster delete).
+#
+# Sync-wave: this lives in the data-platform Application (sync-wave 1),
+# applied after the cloudnative-pg Application (sync-wave 0) registered
+# the ScheduledBackup CRD.
+#
+# ────────────────────────────────────────────────────────────────────────
+# OPERATIONS RUNBOOK — manually triggering a backup
+# ────────────────────────────────────────────────────────────────────────
+# To force a base backup outside the schedule (e.g., before a risky
+# operation), apply a one-off Backup resource:
+#
+#   kubectl apply -f - <<EOF
+#   apiVersion: postgresql.cnpg.io/v1
+#   kind: Backup
+#   metadata:
+#     name: postgres-data-platform-manual-$(date +%Y%m%d-%H%M%S)
+#     namespace: data-platform
+#   spec:
+#     cluster:
+#       name: postgres-data-platform
+#   EOF
+#
+# Listing backups:    kubectl get backups.postgresql.cnpg.io -n data-platform
+# Inspecting one:     kubectl describe backup <name> -n data-platform
+# Watching progress:  kubectl get backups.postgresql.cnpg.io -n data-platform -w
+#
+# Schedule changes: edit the cron, commit, push. CNPG controller picks
+# up the change on its next reconciliation. No data migration needed.
+# ────────────────────────────────────────────────────────────────────────
+
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: postgres-data-platform-weekly
+  namespace: data-platform
+  labels:
+    app.kubernetes.io/name: postgres-data-platform-weekly
+    app.kubernetes.io/part-of: homelab-platform
+spec:
+  # Sunday 02:00:00 UTC. 6-field cron (s m h dom month dow).
+  schedule: "0 0 2 * * 0"
+
+  # Run a base backup immediately when this resource is first applied,
+  # so we get instant feedback rather than waiting for next Sunday.
+  immediate: true
+
+  # Backup CRs are children of the Cluster — cleaned up on Cluster delete.
+  # S3 data persists independently of this owner reference.
+  backupOwnerReference: cluster
+
+  cluster:
+    name: postgres-data-platform

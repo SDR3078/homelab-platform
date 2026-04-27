@@ -16,12 +16,17 @@
 #   (auto-cert via requestAutoCert: true), ConfigMap, PodDisruptionBudget.
 #
 # Cluster-internal endpoints (used by MLflow / Dagster / Lakekeeper later):
-#   API:      https://minio-data-platform.data-platform.svc.cluster.local
+#   API:      https://minio.data-platform.svc.cluster.local
+#                (operator names this Service literally 'minio',
+#                 NOT <tenant-name>)
 #   Console:  https://minio-data-platform-console.data-platform.svc.cluster.local:9443
 #
-# These use the operator's auto-generated CA. In-cluster clients trust
-# the cluster's CA; external Ingress (TBD, deferred to a later session)
-# would terminate at our reflected wildcard cert.
+# These use a Kubernetes-CSR-signed cert (the k3s cluster CA signed it
+# via the standard CSR API). In-cluster clients verify by trusting the
+# cluster CA — auto-injected as ConfigMap kube-root-ca.crt in every
+# namespace, or materialized as a Secret if a CRD requires one (see
+# postgres-backup-ca.yaml). External Ingress (TBD) would terminate at
+# the reflected wildcard cert.
 #
 # Sync-wave: this file lives in the data-platform Application
 # (sync-wave 1), applied after the minio-operator Application

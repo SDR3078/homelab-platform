@@ -1,0 +1,50 @@
+# Cluster CA cert for verifying MinIO's TLS endpoint
+#
+# CNPG's barmanObjectStore.endpointCA needs a Secret reference (not a
+# ConfigMap) holding the CA cert that signed MinIO's auto-generated
+# server cert. With MinIO operator's `requestAutoCert: true`, the
+# Tenant's cert is signed via the Kubernetes CSR API by the cluster's
+# own signing CA — for k3s, that's `k3s-server-ca@<timestamp>`. This
+# is THE SAME CA cert that's auto-injected into every namespace as
+# ConfigMap kube-root-ca.crt.
+#
+# A CA cert is public information by definition (clients distribute it
+# to verify servers), so we commit it as a regular Secret — no
+# kubeseal. Cluster CA rotation in k3s defaults to 10 years, so this
+# static commit isn't a maintenance hazard.
+#
+# ────────────────────────────────────────────────────────────────────────
+# OPERATIONS RUNBOOK — refreshing this Secret if the cluster CA rotates
+# ────────────────────────────────────────────────────────────────────────
+# k3s renews the cluster CA automatically near expiry (~10y default).
+# When that happens, refresh this file:
+#
+#   kubectl get cm kube-root-ca.crt -n data-platform \
+#     -o jsonpath='{.data.ca\.crt}'
+#
+# Replace the cert block below with the output, commit, push. ArgoCD
+# syncs, the new CA is in place before MinIO's next cert rotation.
+# ────────────────────────────────────────────────────────────────────────
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-backup-ca
+  namespace: data-platform
+  labels:
+    app.kubernetes.io/name: postgres-backup-ca
+    app.kubernetes.io/part-of: homelab-platform
+type: Opaque
+stringData:
+  ca.crt: |
+    -----BEGIN CERTIFICATE-----
+    MIIBdzCCAR2gAwIBAgIBADAKBggqhkjOPQQDAjAjMSEwHwYDVQQDDBhrM3Mtc2Vy
+    dmVyLWNhQDE3NzY3MTg3NTQwHhcNMjYwNDIwMTk1OTE0WhcNMzYwNDE3MTk1OTE0
+    WjAjMSEwHwYDVQQDDBhrM3Mtc2VydmVyLWNhQDE3NzY3MTg3NTQwWTATBgcqhkjO
+    PQIBBggqhkjOPQMBBwNCAASjEGozIZURTzNa9g4ylVO3rzk/XNUH265hAut1tU4B
+    qUg253eI2d2hxPbmCTzrWZSO9a9JX9qJBlC/485OGaylo0IwQDAOBgNVHQ8BAf8E
+    BAMCAqQwDwYDVR0TAQH/BAUwAwEB/zAdBgNVHQ4EFgQU8wQeRbqSgHUXCFsMlYkx
+    2uwBQ/4wCgYIKoZIzj0EAwIDSAAwRQIhAPT5YGiNCcRQ2oMEJazHNl8LIUa1cSoM
+    wQuUBOwIjlH1AiBDdXtMHeR0V4Zvf92reD+ZCOP7kfCKbeeA5Vujh62Wyg==
+    -----END CERTIFICATE-----

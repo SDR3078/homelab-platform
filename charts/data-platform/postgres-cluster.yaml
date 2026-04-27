@@ -7,7 +7,9 @@
 # file.
 #
 # What this file declares:
-#   1× Cluster        — the Postgres instance (1 pod, 10Gi PVC, tuned for ~1Gi memory budget)
+#   1× Cluster        — the Postgres instance (1 pod, 10Gi PVC, tuned for
+#                       ~1Gi memory budget) with backup to MinIO via
+#                       barman + continuous WAL archive
 #   3× Database       — declarative CREATE DATABASE for each logical database
 #
 # What CNPG auto-materializes (NOT in this file):
@@ -60,6 +62,54 @@
 #
 # Rotation: regenerate the password, reseal, commit. CNPG's role
 # reconciler picks up the new password and runs ALTER ROLE on next sync.
+# ────────────────────────────────────────────────────────────────────────
+
+# ────────────────────────────────────────────────────────────────────────
+# OPERATIONS RUNBOOK — backup credential rotation
+# ────────────────────────────────────────────────────────────────────────
+# The 'spec.backup' block below references two Secrets in data-platform:
+#   - postgres-backup-credentials (sealed)
+#       Two keys: ACCESS_KEY_ID, ACCESS_SECRET_KEY — a MinIO service
+#       account scoped to the postgres-backups bucket only via
+#       'postgres-backup-policy' (provisioned via mc admin, not in Git).
+#   - postgres-backup-ca (plaintext — cluster CA cert is public info)
+#       One key: ca.crt — the k3s cluster CA that signed MinIO's
+#       auto-cert. Refresh runbook lives in postgres-backup-ca.yaml.
+#
+# Rotating the backup svcacct (recommended quarterly):
+#
+#   # 1. Port-forward to live MinIO API:
+#   kubectl -n data-platform port-forward svc/minio 9000:443
+#
+#   # 2. In another terminal, set up mc and create a NEW svcacct under
+#   #    'admin' with the existing scoped policy:
+#   read -s -p "MinIO root password: " MINIO_ROOT_PASSWORD; echo
+#   mc alias set local https://localhost:9000 admin "$MINIO_ROOT_PASSWORD" --insecure
+#   mc admin user svcacct add --insecure local admin \
+#     --policy /tmp/postgres-backup-policy.json
+#
+#   # 3. Save the new Access Key + Secret Key to your password manager.
+#
+#   # 4. Re-seal — overwrites the existing sealed file:
+#   kubectl create secret generic postgres-backup-credentials \
+#     --namespace data-platform \
+#     --from-literal=ACCESS_KEY_ID="<NEW_ACCESS_KEY>" \
+#     --from-literal=ACCESS_SECRET_KEY="<NEW_SECRET_KEY>" \
+#     --dry-run=client -o yaml > /tmp/postgres-backup-credentials.yaml
+#   kubeseal -f /tmp/postgres-backup-credentials.yaml \
+#     -w charts/data-platform/postgres-backup-credentials-sealed.yaml \
+#     --controller-name=sealed-secrets-controller \
+#     --controller-namespace=sealed-secrets
+#   shred -u /tmp/postgres-backup-credentials.yaml
+#
+#   # 5. Commit + push. ArgoCD syncs, sealed-secrets controller decrypts,
+#   #    real Secret is updated. Wait for next backup → confirm success
+#   #    via 'kubectl get backups.postgresql.cnpg.io -n data-platform'.
+#
+#   # 6. Once a backup has completed with the new keys, remove the OLD
+#   #    svcacct from MinIO:
+#   mc admin user svcacct ls --insecure local admin
+#   mc admin user svcacct rm --insecure local <OLD_ACCESS_KEY>
 # ────────────────────────────────────────────────────────────────────────
 
 ---
@@ -124,6 +174,34 @@ spec:
     initdb:
       database: app
       owner: app
+
+  # Backup config — barman writes base backups + WAL stream to MinIO.
+  # Credentials sealed into Git separately (see runbook above). Retention
+  # of 7d means at steady state with weekly base backups we keep ONE
+  # base backup; bump to "14d" if defense-in-depth against base-backup
+  # corruption matters more than storage.
+  backup:
+    retentionPolicy: "7d"
+    barmanObjectStore:
+      destinationPath: s3://postgres-backups/
+      endpointURL: https://minio.data-platform.svc.cluster.local
+      endpointCA:
+        name: postgres-backup-ca
+        key: ca.crt
+      s3Credentials:
+        accessKeyId:
+          name: postgres-backup-credentials
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: postgres-backup-credentials
+          key: ACCESS_SECRET_KEY
+      # serverName is the path prefix inside the bucket — multiple
+      # Clusters can share one bucket safely. Match the Cluster name.
+      serverName: postgres-data-platform
+      data:
+        compression: gzip
+      wal:
+        compression: gzip
 
   # Declarative role management. Each entry is a Postgres role; the
   # operator runs CREATE/ALTER ROLE idempotently. The password lives
