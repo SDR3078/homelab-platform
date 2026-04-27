@@ -1,0 +1,70 @@
+# MinIO console Ingress at minio.lab.batzbak.top
+#
+# Exposes the MinIO Tenant's web UI (Service 'minio-data-platform-console')
+# at https://minio.lab.batzbak.top. TLS is terminated at ingress-nginx
+# using the wildcard Secret 'wildcard-lab-tls' (reflected from the
+# cert-manager namespace into this one — see
+# charts/cert-manager/certificate-wildcard.yaml's reflector allowlist).
+#
+# The MinIO operator's `requestAutoCert: true` setting means the console
+# Service speaks HTTPS internally on port 9443 using a
+# Kubernetes-CSR-signed cert. backend-protocol=HTTPS tells ingress-nginx
+# to re-encrypt traffic over HTTPS to the backend rather than
+# terminate-and-replay-as-HTTP. Same pattern as charts/argocd/ingress.yaml
+# from session 2.
+#
+# proxy-body-size=1g allows larger uploads through the browser console
+# if you ever use it for ad-hoc uploads (the actual high-volume data
+# path is the S3 API, not the console).
+#
+# Sync-wave: this file lives in the data-platform Application
+# (sync-wave 1), applied after ingress-nginx and the wildcard Certificate
+# are in place.
+#
+# ────────────────────────────────────────────────────────────────────────
+# OPERATIONS RUNBOOK — accessing the console
+# ────────────────────────────────────────────────────────────────────────
+# Once DNS resolves (the *.lab.batzbak.top wildcard handles this) and
+# the wildcard cert is reflected, navigate to:
+#
+#   https://minio.lab.batzbak.top
+#
+# Log in with MINIO_ROOT_USER / MINIO_ROOT_PASSWORD from your password
+# manager ('homelab-platform / minio-root').
+#
+# To use a non-root identity (e.g., the postgres-backup svcacct for
+# read-only browsing of the backups bucket), authenticate with the
+# svcacct's Access Key as username and Secret Key as password —
+# console accepts svcacct credentials the same as the root user.
+# ────────────────────────────────────────────────────────────────────────
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: minio-console
+  namespace: data-platform
+  labels:
+    app.kubernetes.io/name: minio-console
+    app.kubernetes.io/part-of: homelab-platform
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "1g"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: minio.lab.batzbak.top
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: minio-data-platform-console
+                port:
+                  number: 9443
+  tls:
+    - hosts:
+        - minio.lab.batzbak.top
+      secretName: wildcard-lab-tls
