@@ -6,6 +6,15 @@ One-time manual install. After this runs, everything else in this repo is manage
 
 ArgoCD v3.3.8 (released April 2026, CNCF graduated).
 
+## Disaster recovery
+
+This file covers ArgoCD installation only. For a full from-scratch cluster
+rebuild — which requires restoring the sealed-secrets master key BEFORE
+applying the root Application — see [`docs/rebuild.md`](../docs/rebuild.md).
+
+Skipping the master-key restore on rebuild leaves every sealed secret in
+this repo permanently undecryptable.
+
 ## Step 1 — Install ArgoCD
 
 ```bash
@@ -79,6 +88,34 @@ kubectl get pods -n whoami-test
 Expected: one `whoami-xxxxx` pod, Running.
 
 At this point the GitOps loop is live. Every future change flows through Git commits.
+
+## Step 5 — Set a real admin password and delete the bootstrap secret
+
+Once ArgoCD is reachable (initially via port-forward, later via Ingress
+at https://argocd.lab.batzbak.top), swap the auto-generated initial
+password for a real one and delete the bootstrap Secret.
+
+```bash
+# Log in with the initial password from Step 2:
+argocd login localhost:8080 --username admin --insecure
+# (later, behind Ingress: argocd login argocd.lab.batzbak.top)
+
+# Set a new password (prompts twice):
+argocd account update-password
+
+# Verify the new password works:
+argocd login localhost:8080 --username admin --insecure
+
+# Delete the now-unused bootstrap Secret:
+kubectl -n argocd delete secret argocd-initial-admin-secret
+```
+
+Save the new password to your password manager under
+`homelab-platform / argocd-admin`. ArgoCD does NOT regenerate the
+initial-admin-secret after deletion — recovery from a lost admin
+password requires the in-band reset procedure documented at
+https://argo-cd.readthedocs.io/en/stable/faq/#i-forgot-the-admin-password
+(painful but possible).
 
 ## Why non-HA
 

@@ -13,6 +13,23 @@ GitOps-managed k3s cluster running data + ML platform services on batzbakserver.
 
 Single-node k3s v1.34.6 running in a Proxmox VM on batzbakserver.
 
+## Prerequisites for rebuild
+
+To rebuild this cluster from scratch, you'll need:
+
+- A Proxmox VE host (or any Linux host capable of running a VM)
+- The `sealed-secrets-master-key-BACKUP.yaml` file — irreplaceable,
+  stored OUTSIDE this repo. Without it, every committed sealed secret
+  becomes permanently undecryptable
+- A password manager with the entries listed in
+  [`docs/rebuild.md`](docs/rebuild.md)
+- DNS for `*.lab.batzbak.top` (or your equivalent) resolvable from the
+  cluster, plus a Cloudflare API token for cert-manager's DNS-01 flow
+- A devbox (any Linux workstation) with `kubectl`, `helm`, `argocd`,
+  `kubeseal`, and `mc` CLIs installed
+
+Full from-scratch rebuild runbook: [`docs/rebuild.md`](docs/rebuild.md).
+
 ## Services
 
 To be populated as sessions progress:

@@ -14,6 +14,15 @@
 *-secret.yaml
 !sealed-*.yaml
 
+# CRITICAL: the sealed-secrets master-key backup file is the private
+# half of the keypair that decrypts every committed sealed secret in
+# this repo. It MUST be stored OUTSIDE this repo (encrypted backup,
+# password manager attachment). Losing it without backup permanently
+# bricks every sealed-*.yaml file. This rule catches it if it ever
+# accidentally lands in the working tree.
+# Recovery if lost: see docs/rebuild.md "Lost master key".
+sealed-secrets-master-key*.yaml
+
 # Python
 __pycache__/
 *.pyc

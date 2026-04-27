@@ -1,3 +1,53 @@
+# Cloudflare API token for cert-manager DNS-01 challenges
+#
+# cert-manager uses this token to write _acme-challenge TXT records into
+# Cloudflare DNS to prove ownership of *.lab.batzbak.top during ACME
+# certificate issuance. Referenced by ClusterIssuer
+# 'letsencrypt-production' in cluster-issuer.yaml.
+#
+# Token scope: Zone:Zone:Read + Zone:DNS:Edit on batzbak.top only.
+# A compromised token can rewrite DNS for that zone, nothing else.
+#
+# ────────────────────────────────────────────────────────────────────────
+# OPERATIONS RUNBOOK — generating and sealing the token from scratch
+# ────────────────────────────────────────────────────────────────────────
+# 1. Generate the token in Cloudflare:
+#    https://dash.cloudflare.com/profile/api-tokens → Create Token →
+#    Create Custom Token, with these permissions:
+#      Zone : Zone : Read
+#      Zone : DNS  : Edit
+#    Zone Resources: Include → Specific zone → batzbak.top
+#    Save the resulting token (shown ONCE) to your password manager
+#    under 'homelab-platform / cloudflare-api-token'.
+#
+# 2. From the devbox, build a regular Secret manifest (NOT committed):
+#
+#    read -s -p "Cloudflare API token: " CF_TOKEN; echo
+#    kubectl create secret generic cloudflare-api-token \
+#      --namespace cert-manager \
+#      --from-literal=api-token="$CF_TOKEN" \
+#      --dry-run=client -o yaml > /tmp/cloudflare-api-token.yaml
+#
+# 3. Encrypt with kubeseal — this overwrites the file you're reading:
+#
+#    kubeseal -f /tmp/cloudflare-api-token.yaml \
+#      -w charts/cert-manager/cloudflare-api-token.yaml \
+#      --controller-name=sealed-secrets-controller \
+#      --controller-namespace=sealed-secrets
+#
+# 4. Shred plaintext + commit + push:
+#
+#    shred -u /tmp/cloudflare-api-token.yaml
+#    git add charts/cert-manager/cloudflare-api-token.yaml
+#    git commit -m "reseal cloudflare-api-token"
+#    git push
+#
+# Rotation: Cloudflare lets you "Roll" the existing token (issues new
+# credentials, invalidates old) or create a fresh one. Same procedure
+# from step 2. ArgoCD propagates the new sealed Secret; cert-manager
+# uses the new token on next renewal.
+# ────────────────────────────────────────────────────────────────────────
+
 ---
 apiVersion: bitnami.com/v1alpha1
 kind: SealedSecret

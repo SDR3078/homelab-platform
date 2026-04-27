@@ -76,7 +76,10 @@
 #       One key: ca.crt — the k3s cluster CA that signed MinIO's
 #       auto-cert. Refresh runbook lives in postgres-backup-ca.yaml.
 #
-# Rotating the backup svcacct (recommended quarterly):
+# Initial setup (on rebuild) OR rotation (recommended quarterly):
+# operationally identical procedure. The policy JSON is committed at
+# bootstrap/postgres-backup-policy.json — apply it via
+# `mc admin policy create` before creating the svcacct.
 #
 #   # 1. Port-forward to live MinIO API:
 #   kubectl -n data-platform port-forward svc/minio 9000:443

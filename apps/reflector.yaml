@@ -4,6 +4,25 @@
 # copies them to other namespaces. We use it to propagate the single
 # wildcard TLS Secret (*.lab.batzbak.top) from cert-manager's namespace
 # into every namespace that runs an Ingress referencing it.
+#
+# How the annotations work (set on the SOURCE Secret — see
+# charts/cert-manager/certificate-wildcard.yaml for the live example):
+#
+#   reflection-allowed: "true"
+#       Opts this Secret into reflection at all.
+#   reflection-allowed-namespaces: "ns1,ns2,..."
+#       Comma-separated list of namespaces (or regex patterns) where
+#       copies of the Secret are permitted. Append new namespaces as
+#       services come online (e.g., MLflow's namespace in session 4).
+#   reflection-auto-enabled: "true"
+#       Automatically create copies in the matching namespaces below,
+#       rather than only on explicit on-demand mirroring requests.
+#   reflection-auto-namespaces: "ns1,ns2,..."
+#       Which namespaces to push auto-copies into.
+#
+# By default reflector runs cluster-wide (no namespace isolation in
+# its RBAC). If multi-tenant isolation is needed later, narrow via
+# reflector's Helm values.
 
 apiVersion: argoproj.io/v1alpha1
 kind: Application
