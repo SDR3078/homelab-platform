@@ -1,8 +1,9 @@
 # MinIO Tenant for the data plane
 #
-# One MinIO instance ('minio-data-platform') with three pre-created
-# buckets: iceberg-warehouse, mlflow-artifacts, raw-data. Standalone
-# mode (1 server × 1 volume × 20Gi) — appropriate for single-node k3s.
+# One MinIO instance ('minio-data-platform') with four pre-created
+# buckets: iceberg-warehouse, mlflow-artifacts, raw-data,
+# postgres-backups. Standalone mode (1 server × 1 volume × 20Gi) —
+# appropriate for single-node k3s.
 # Production deployments would use 4+ servers × 4+ volumes per server
 # for erasure coding.
 #
@@ -182,3 +183,4 @@ spec:
     - name: iceberg-warehouse
     - name: mlflow-artifacts
     - name: raw-data
+    - name: postgres-backups
