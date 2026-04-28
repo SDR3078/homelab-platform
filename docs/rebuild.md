@@ -17,6 +17,11 @@ You will need:
   - `homelab-platform/postgres-backup-svcacct`
   - `homelab-platform/cloudflare-api-token` (only needed for rotation or
     master-key-loss recovery — the token itself is sealed in Git)
+  - `homelab-platform/wedding-db` (the wedding-site CNPG role password)
+  - `homelab-platform/wedding-site-auth-secret` (Auth.js JWT key — only
+    needed for master-key-loss recovery; sealed in Git)
+  - `homelab-platform/ghcr-pull-pat` (only needed for rotation when
+    expiry hits — the token itself is sealed in Git)
 - DNS for `*.lab.batzbak.top` (or your domain) resolvable from clients
 - Devbox with `kubectl`, `helm`, `argocd`, `kubeseal`, `mc` CLIs
 
@@ -168,6 +173,40 @@ diff /tmp/refreshed-backup.yaml /path/to/sealed-secrets-master-key-BACKUP.yaml
 ```
 
 Should be identical apart from `generation` / `resourceVersion` fields.
+
+### 10. Tenant apps
+
+The platform hosts tenant apps whose chart lives in a separate repository.
+Each tenant app gets two ArgoCD Applications:
+- `<app>-bootstrap` — in-repo glue (namespace + sealed secrets), sync-wave 0
+- `<app>` — the chart itself, pointing at the tenant repo's `helm/` path,
+  sync-wave 1
+
+Currently deployed tenant apps:
+- `wedding-site` (https://github.com/SDR3078/wedding-site)
+
+Per-tenant rebuild shape (after Step 9 finishes):
+
+1. **Provision the tenant's database + role on CNPG.** Procedure
+   documented inline in `charts/<app>/namespace.yaml`'s OPERATIONS
+   RUNBOOK header — psql heredoc + port-forward + the tenant repo's
+   `npm run db:push` (or migration equivalent).
+
+2. **Re-seal any tenant-specific runtime secrets.** Each `*-sealed.yaml`
+   in `charts/<app>/` has a full kubeseal procedure inline. Plaintext
+   recovery inputs (DB password, Auth.js secret, GHCR PAT, etc.) come
+   from the password manager entries listed in Prerequisites.
+
+3. **Push.** Both Applications were already in `apps/`, so ArgoCD
+   reconciles them automatically — bootstrap (wave 0) creates the
+   namespace and decrypts SealedSecrets, then the chart Application
+   (wave 1) applies the Deployment. Brief `CreateContainerConfigError`
+   on first pod schedule is expected (~30s) and self-heals.
+
+Tenant-side generic deploy guide (placeholders that any deployer fills
+in for their cluster — the homelab-platform-specific values live in
+`charts/<app>/` here):
+- wedding-site: https://github.com/SDR3078/wedding-site/blob/main/deploy/README.md
 
 ## Lost master key
 

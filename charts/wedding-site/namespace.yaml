@@ -1,0 +1,94 @@
+# wedding namespace — tenant for the Anna & Sander wedding-site app
+#
+# Houses the Next.js app deployed via the chart in the SDR3078/wedding-site
+# repository (see apps/wedding-site.yaml). Platform-side glue (this
+# Namespace and the SealedSecrets in this directory) is owned in this
+# repo and applied by apps/wedding-site-bootstrap.yaml. The chart itself
+# is in a separate tenant repo so its lifecycle decouples from platform
+# changes — CI in the tenant repo bumps image.tag on every push, ArgoCD
+# rolls a new pod, this repo never has to know.
+#
+# Cross-namespace dependency: the wedding-site pod connects to CNPG at
+#   postgres-data-platform-rw.data-platform.svc.cluster.local:5432/wedding
+# This is the first cross-namespace data-plane consumer in the cluster.
+# Works by default (no NetworkPolicy in place yet); when NetworkPolicies
+# arrive, an egress allowance from `wedding` → `data-platform` plus DNS
+# will be needed.
+#
+# Pod Security Admission: 'restricted' is enforced. The wedding-site
+# container runs as non-root (uid 1001), drops ALL capabilities, sets
+# seccomp RuntimeDefault, no privileged options (see helm/templates/
+# deployment.yaml in the tenant repo). data-platform stays at 'baseline'
+# only because CNPG/MinIO need fsGroup quirks; this tenant doesn't, so
+# we tighten one notch.
+#
+# ────────────────────────────────────────────────────────────────────────
+# OPERATIONS RUNBOOK — first-time database provisioning for this tenant
+# ────────────────────────────────────────────────────────────────────────
+# CNPG has no Role CRD yet, so role + password creation is imperative
+# psql. The database itself is also created via psql (one atomic heredoc
+# instead of mixing Database CRD + psql for marginal benefit). Plus the
+# initial schema is pushed with drizzle-kit since the chart has no
+# migration Job today (see wedding-site/TODO.md for the level-3
+# escalation trigger).
+#
+# 1. Generate the wedding DB password locally:
+#
+#      PASSWORD="$(openssl rand -base64 24)"
+#      echo "$PASSWORD"   # save to password manager as
+#                         # 'homelab-platform/wedding-db'
+#
+# 2. Create database + role + grants. NOTE: 'kubectl exec -i' is required
+#    to pipe the heredoc to psql's stdin — without -i the heredoc is
+#    silently dropped:
+#
+#      kubectl exec -i -n data-platform postgres-data-platform-1 -- psql <<EOF
+#      CREATE DATABASE wedding;
+#      CREATE USER wedding WITH PASSWORD '${PASSWORD}';
+#      GRANT ALL PRIVILEGES ON DATABASE wedding TO wedding;
+#      EOF
+#
+#      # Postgres 15+ requires schema-level grants on a fresh database:
+#      kubectl exec -n data-platform postgres-data-platform-1 -- \
+#        psql -d wedding -c "GRANT ALL ON SCHEMA public TO wedding;"
+#
+# 3. Push initial schema using drizzle-kit. Port-forward to the writable
+#    CNPG service (`-rw` points to the current primary; pod names rotate
+#    on failover, so don't target by pod name):
+#
+#      kubectl port-forward -n data-platform svc/postgres-data-platform-rw 5433:5432 &
+#      PF_PID=$!
+#      sleep 3
+#
+#      cd /path/to/wedding-site
+#      DATABASE_URL="postgresql://wedding:${PASSWORD}@localhost:5433/wedding" \
+#        npm run db:push
+#
+#      kill $PF_PID
+#
+# 4. Continue with sealed-secret creation: see
+#    `wedding-site-app-sealed.yaml` and `ghcr-pull-sealed.yaml` runbooks
+#    in this directory for the kubeseal procedures.
+#
+# Schema migrations: the chart has no migration Job today. Schema changes
+# follow the same procedure as step 3 (port-forward + db:push) until the
+# tenant repo adds drizzle-kit generate/migrate + a pre-sync Job. The
+# `db:push --force` script is destructive (it drops columns based on
+# schema diff with no review), so review the schema diff mentally before
+# merging schema changes. Escalation trigger: first migration where push
+# can't safely produce the right transformation (column rename with
+# backfill, NOT NULL with non-trivial default, multi-step transform).
+# ────────────────────────────────────────────────────────────────────────
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: wedding
+  labels:
+    app.kubernetes.io/name: wedding
+    app.kubernetes.io/part-of: homelab-platform
+    app.kubernetes.io/managed-by: argocd
+
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted

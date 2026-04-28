@@ -1,0 +1,96 @@
+# GHCR image-pull credentials for wedding-site
+#
+# Allows the kubelet to pull ghcr.io/sdr3078/wedding-site:<sha> images
+# (the package is private). Referenced by the wedding-site Deployment's
+# imagePullSecrets via the `image.pullSecrets` Helm value (see
+# helm/values.yaml in the tenant repo).
+#
+# Token scope: read:packages only — Download container images and read
+# their metadata. No other GitHub permissions. A compromised token can
+# enumerate + pull from the configured GitHub user's packages, nothing
+# else.
+#
+# Username embedded in the dockerconfigjson: SDR3078 (the GitHub user
+# owning the package). Email: sanderdereu95@gmail.com (Docker config
+# format requires it; it's not used for auth).
+#
+# Why private package: chosen on 2026-04-28 (see session notes) — image
+# bundles for a Next.js wedding site aren't materially sensitive (the
+# code is what guests already download in their browser), but private
+# matches the "default to private" pattern elsewhere in this repo and
+# adds one more friction layer.
+#
+# ────────────────────────────────────────────────────────────────────────
+# OPERATIONS RUNBOOK — generating + sealing this secret from scratch
+# ────────────────────────────────────────────────────────────────────────
+# 1. Generate a classic Personal Access Token on GitHub. Use the magic
+#    URL that pre-fills the read:packages scope (avoids accidental
+#    over-scoping):
+#
+#      https://github.com/settings/tokens/new?scopes=read:packages
+#
+#    - Note: 'homelab-platform GHCR pull'
+#    - Expiration: 1 year (or whatever you prefer)
+#    - Confirm only `read:packages` is ticked
+#    - Generate, copy. Save to password manager as
+#      'homelab-platform/ghcr-pull-pat' (the token is shown ONCE).
+#
+#    Fine-grained PATs are NOT supported by GHCR — use classic only.
+#
+#    Record the expiration date here on each rotation:
+#      - Last sealed: 2026-04-28
+#      - Expires:    <fill in from github.com/settings/tokens>
+#
+# 2. Build the plaintext Secret manifest (NOT committed):
+#
+#      read -s -p "GHCR PAT: " GHCR_PAT; echo
+#      kubectl create secret docker-registry ghcr-pull \
+#        --namespace wedding \
+#        --docker-server=ghcr.io \
+#        --docker-username=SDR3078 \
+#        --docker-password="${GHCR_PAT}" \
+#        --docker-email=sanderdereu95@gmail.com \
+#        --dry-run=client -o yaml > /tmp/ghcr-pull.yaml
+#
+# 3. Encrypt with kubeseal — overwrites THIS file's encryptedData block:
+#
+#      kubeseal -f /tmp/ghcr-pull.yaml \
+#        -w charts/wedding-site/ghcr-pull-sealed.yaml \
+#        --controller-name=sealed-secrets-controller \
+#        --controller-namespace=sealed-secrets
+#
+#    NOTE: kubeseal overwrites the YAML body but DOES NOT preserve this
+#    runbook header. Manually re-prepend the comment block above before
+#    committing.
+#
+# 4. Shred plaintext + commit + push:
+#
+#      shred -u /tmp/ghcr-pull.yaml
+#      git add charts/wedding-site/ghcr-pull-sealed.yaml
+#      git commit -m "reseal ghcr-pull (rotation / new expiry)"
+#      git push
+#
+# Rotation: same procedure when the PAT approaches expiry. GitHub also
+# allows 'regenerate' on an existing token (issues new credentials,
+# invalidates old) — convenient if you don't want to rename.
+#
+# Failure mode: if the PAT expires without rotation, ImagePullBackOff
+# starts on the next pod restart (existing pods keep running with their
+# already-pulled images). Set a calendar reminder for ~1 month before
+# the expiry date above.
+# ────────────────────────────────────────────────────────────────────────
+
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: ghcr-pull
+  namespace: wedding
+spec:
+  encryptedData:
+    .dockerconfigjson: AgCctIbtR9tYfwE6/+Zyh+5CG5fo8xLUnw0hMamOVu4cy5vbyinTx1zM0tG2QXGA5Z+dCRAOg46HbP3pQx2DFo+auutFG/ancyTcdfDoxUsgyEXF1Un3xiys9ePp1lhGO1cG6FFPz1TARLpnrMdl/7NbwNA/BiSiiOfsOyM7kXyz5g8CmjxVlAznPYD9t9iXwHjGAHnD4W1CCmGJo9HjmDawLWvlrvjJbOWxgGWuiP9CoHysfajglDlkZ0vPHaZb37nhjACk5OJaLy32PgklkejGpnlaET4VcVL56yVxJdUAPbe5TeMFlGrjIjTLev6FnijfTKAhopm7WnwyDxkhdJ7T1mw4lznJaJ6OeOvt4YQyiPC/TvWHHZHjSZ12oGeh6A6bSgu4GQKkmZrgTxEj8c+HQ4xRP6VCAo4RkPAwdnsuyfbc9LqiZ0u63/CZUdKsUdejFqfhxByGUGpSi7Iosl6nFMxI0IcN0FHeD69IWU9Shwqup7yIrx9v5ecQlCX+jJXZODHyHSiLqK5Hbg20obII2W+68vJsYjei3A5gKG5CfH+hf6a6YQKHCT6XMLkdG63lBPjXWrKv7asddmVBP7z8g/df7SQkTFQ57ulda+GAVxyeEtZ0W0RCFUs6NCXF67nm8Xbyy4hV66MAo1se2s64tu7IfhQ59CTJRH5kw80tVY11iYRo3d4fSc+mLV+CyFKQpgpjLj+b5dkJm0Iu8eyMRyZ3iafeD2Gi7OhTSuXqYqpKboxEaNia1bnmUxRTy2h/e24WAruazlQCnR/n134jGN4FV+qPMdXwhtcAvWSoDY6EWWenHEyBIJyp2GLzqlea88sE/13r+FsA80jkvvpGjyVHr87lQLNLDFb/GHjJ/+oeh4eq/ZD4PmwHGaBjjUVp9DW/vi0dvqKMElOR+FhuiAt3cUuEZHPY+iESBPdUe25LYVSCdOlUxllxQYstvqFvDHPBZ6lqinf18MrNwQ==
+  template:
+    metadata:
+      name: ghcr-pull
+      namespace: wedding
+    type: kubernetes.io/dockerconfigjson

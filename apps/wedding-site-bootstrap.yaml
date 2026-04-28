@@ -1,0 +1,63 @@
+# wedding-site bootstrap — namespace + sealed secrets
+#
+# In-repo glue layered under the wedding-site tenant Application
+# (apps/wedding-site.yaml). This Application owns the cluster-side
+# resources the chart depends on but the chart itself does not declare:
+#   - Namespace 'wedding' (declared in Git, not via CreateNamespace=true,
+#     so PSA labels and metadata are first-class)
+#   - SealedSecret 'wedding-site-app' (DATABASE_URL/AUTH_SECRET/ADMIN_USER_IDS)
+#   - SealedSecret 'ghcr-pull' (dockerconfigjson for the private GHCR image)
+#
+# Split from apps/wedding-site.yaml because the chart itself lives in a
+# different repository (https://github.com/SDR3078/wedding-site) with
+# its own CI lifecycle (image bumps on every push to main). Platform-side
+# glue stays here so it lives next to the rest of the cluster's
+# infrastructure config and so the tenant repo can stay
+# deployment-target-agnostic.
+#
+# Sync-wave 0 — runs before apps/wedding-site.yaml (wave 1). The chart's
+# Deployment references both SealedSecrets via envFrom + imagePullSecrets,
+# so they must materialize first. The Bitnami sealed-secrets controller
+# decrypts each SealedSecret on its first reconcile, so by the time wave 1
+# starts applying the chart, the real Secrets exist in the namespace.
+# Same wave-0 pattern as cloudnative-pg.yaml.
+#
+# Naming: '-bootstrap' rather than '-config' or '-platform'. '-config' in
+# this repo specifically means "config for an upstream-Helm-installed
+# operator" (cert-manager-config, argocd-config). Wedding-site has no
+# operator dependency. '-bootstrap' is honest about the actual function
+# (one-time platform glue that the tenant chart depends on).
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: wedding-site-bootstrap
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/SDR3078/homelab-platform.git
+    targetRevision: main
+    path: charts/wedding-site
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: wedding
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

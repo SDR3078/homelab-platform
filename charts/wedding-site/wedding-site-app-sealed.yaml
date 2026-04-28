@@ -1,0 +1,104 @@
+# wedding-site app runtime secret
+#
+# Holds the runtime config the wedding-site Next.js app reads via envFrom
+# (see helm/templates/deployment.yaml in the tenant repo). Three keys:
+#
+#   - DATABASE_URL — postgres-js connection string pointing at the CNPG
+#     primary in the data-platform namespace. Must use the `-rw` Service
+#     hostname (postgres-data-platform-rw.data-platform.svc), NOT a pod
+#     name; pod names rotate on failover. Cross-namespace DNS resolves
+#     cluster-wide.
+#
+#   - AUTH_SECRET — Auth.js JWT signing/encryption key. Rotating it
+#     invalidates all active sessions, so it's effectively a long-lived
+#     secret. Keep in password manager under
+#     'homelab-platform/wedding-site-auth-secret' for DR (master-key-loss
+#     recovery requires regenerating from this value).
+#
+#   - ADMIN_USER_IDS — comma-separated list of users.id values authorised
+#     to access /admin. Empty at first deploy (chicken-and-egg: the user
+#     row doesn't exist until you sign in once with an invite code). See
+#     "ADMIN_USER_IDS chicken-and-egg" below.
+#
+# ────────────────────────────────────────────────────────────────────────
+# OPERATIONS RUNBOOK — generating + sealing this secret from scratch
+# ────────────────────────────────────────────────────────────────────────
+# Prerequisites: the wedding database + role + password from
+# `namespace.yaml`'s database-provisioning runbook (steps 1-3) must be
+# complete; password is in your password manager as
+# 'homelab-platform/wedding-db'.
+#
+# 1. Generate AUTH_SECRET locally (32 bytes base64):
+#
+#      AUTH_SECRET="$(openssl rand -base64 32)"
+#      echo "$AUTH_SECRET"   # save to password manager as
+#                            # 'homelab-platform/wedding-site-auth-secret'
+#
+# 2. Build the plaintext Secret manifest (NOT committed):
+#
+#      DB_PASSWORD="<the wedding DB password from password manager>"
+#      DB_URL="postgresql://wedding:${DB_PASSWORD}@postgres-data-platform-rw.data-platform.svc:5432/wedding"
+#
+#      kubectl create secret generic wedding-site-app \
+#        --namespace wedding \
+#        --from-literal=AUTH_SECRET="${AUTH_SECRET}" \
+#        --from-literal=ADMIN_USER_IDS="" \
+#        --from-literal=DATABASE_URL="${DB_URL}" \
+#        --dry-run=client -o yaml > /tmp/wedding-site-app.yaml
+#
+# 3. Encrypt with kubeseal — overwrites THIS file's encryptedData block:
+#
+#      kubeseal -f /tmp/wedding-site-app.yaml \
+#        -w charts/wedding-site/wedding-site-app-sealed.yaml \
+#        --controller-name=sealed-secrets-controller \
+#        --controller-namespace=sealed-secrets
+#
+#    NOTE: kubeseal overwrites the YAML body but DOES NOT preserve this
+#    runbook header. Manually re-prepend the comment block above before
+#    committing.
+#
+# 4. Shred plaintext + commit + push:
+#
+#      shred -u /tmp/wedding-site-app.yaml
+#      git add charts/wedding-site/wedding-site-app-sealed.yaml
+#      git commit -m "reseal wedding-site-app"
+#      git push
+#
+# ADMIN_USER_IDS chicken-and-egg: at first deploy ADMIN_USER_IDS is
+# empty — no user.id can exist yet. Strategy:
+#   1. First deploy with ADMIN_USER_IDS="". App boots; nobody is admin.
+#   2. Sign in with an invite code (created via `npm run invite:create`
+#      from the tenant repo, run against the deployed DB via port-forward).
+#      The first-login flow creates a `user` row in the wedding DB and
+#      binds it to the invite.
+#   3. Look up the id:
+#        kubectl port-forward -n data-platform svc/postgres-data-platform-rw 5433:5432 &
+#        psql "postgresql://wedding:<pw>@localhost:5433/wedding" \
+#          -c 'SELECT id, name FROM "user";'
+#   4. Re-run steps 1-4 above with --from-literal=ADMIN_USER_IDS="<that id>".
+#      ArgoCD applies the new sealed Secret; controller decrypts; pod
+#      restarts (envFrom snapshot is read at container start, so a
+#      Deployment rollout is required for the new value to take effect).
+#
+# Rotation: same procedure from step 1. The wedding DB password rotation
+# requires updating the role first via psql:
+#   kubectl exec -i -n data-platform postgres-data-platform-1 -- \
+#     psql -c "ALTER USER wedding WITH PASSWORD '<new>';"
+# then re-run steps 1-4 above with the new password.
+# ────────────────────────────────────────────────────────────────────────
+
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: wedding-site-app
+  namespace: wedding
+spec:
+  encryptedData:
+    ADMIN_USER_IDS: AgBXmSboDz+QPAyNAp6FWWHLEbi7R0NkXRZ7vFvDVqjSV2PoMzJv6AQB/TmhyX8bR7DvB+wju6BsZYAhBWfkR6fb2n7wtvjKIuSoIeeCNdZuJ+xftr2q+0LCPOomtVt0UN2W69MKHSmp9I3r8Gk95hTmGwCVrwVd5loYMzLrgjRg8sn9NW4wfL/UO+AFKCR2QiKfXKkG2UCoYYiM1WBkOgR5Hr9/JlJ6cJfI/D6HvhgEl0AHWlM2nYnNARhIk9lb0eK8rkhvzG4FuptNyH6SYFZsod+FzeTnh9/vHJrATwF3w2zCR/aL4/FICphrsMyiooZPfPKFbPlCezAYtvr72/+gWnLngfmfTbidmFZTm8e6C4flO6pua1kjCKNVTGAoByDe5aV7a2ANK2sFRwDDtgIAUul1zFbRpYUZhuq1hSAIIjXcT/sny6YHL8akngIyVQeG7b9zJoHYx7vpAKV6jUED3FyqgOMZwuni9LzaGX8Lex41dEbAqUNZVKNlaD1pi+mSeY63CJJtZFiyq6csxcBN5SQeQ66hVJC3uE1lcZRD3/kNkTkKcnBQy6LVmjChlnePM6i5kYckDKhiVMHPoNf82ep1if/0sljF34axYQMwDPTckqvjlr6R3oS1tfte4fk4IhGkr0Qe/3lE6CNLi7qMudir8h8M3ZWOXkihNOyocWitGax9cppVUw2WsVYHAEc=
+    AUTH_SECRET: AgATazTvwG+G5VihmewKU/qJCPb89RghR7OB+9QysOMEPA3rdvOUQQo7KpOXxIrV5BqHIxWtCuQB5O/gqJVx/pbpOQDehN9bDYx8ESYUaXgRzyQdgs9f4Td7poXNw+s7RZ+XjvroGBT0SF/PSiqCDRq7NoP/3BquPfvDGaE/vJ8WW3Lj+fjFXgE1JzL+MF+tqif6jvRqCXsvkYNL64Nz+9UE6PKKN/OeSg+lwDOZ5iaisnqLcWY35uVa7Tun4fToEAatEK2O1pl3blsM4jO6ulZBjNsuesQysRuwN/aUlVvQEjx4Ew29T/zq6wtqUDDeCW3/ypetb8EuRrzJfiZ0fvlYeVRMrhFmp3UUcrn98/Uillqwlc5rlj9Sin0wOp/iPSDjrFYORee7CuKbcPpaGsNN0Fyt1hFSEao55x9cnZmipk5HUoP968HEJlP6ia+Mr1Mljkr/Z7aoHR4/oEnCPYqGYRDRMna0XeaJRKMe4MgwdndhK4ikCxS3x4LQg8Lk00isq3MRqYNAuUIeVtc6g4AM6QUkEXJUjGaOaNzvmrxfqgPHocd7jpQ/QRQiMH9KMIHgroA+aAHaks2JEDQpLNpvyPvzy2iuKt+lJRQ7r9EFdwpkVPf0Sc/TR0t+G+GmfsqfIqAKUkftHaSYlY3LBQY0UxpHDopL2UBdRCT8AJmd+aBbTmNQHDq5sTZj9DDRdv+uXbgnZAj2RE+iIlqJotQNqsmabnsq/So88jUfC6lFbl61dsxIckGBzFVm/g==
+    DATABASE_URL: AgACE+lir+maUBMqUrRmWkCJmPgoMAVggAqak79L1cwg30mzai96CM4JXOeMj1IhVNiDuGLOmHAbJbFVvCqH0ENSjnahSuPNIn1qPTHlLCtFVwEVh4iGLr2F57dcyRF7AkiZxji8Vv05f1ZgoGTHvDMC0S8wnWcD7zG3xkKu0LRfJ7QTGJp2laFuHiCwvZbtIATWjoyy8W0XhosrfrmDh/ZXjtI6f+Q+T1ZWAlrybD6Eekzu5a6wEmLLEDJbtM+cWLUzOVlmmXHA4MAtUeHql41Pv9KEtBtWZ9kp3TrvWX3SyTUAayN8NnLptII/t7AvlbhK5gG7GrLkW2Y7v3xK9HFSD/3IJcphftw6NcPctPvgz7jIKX38IB/e33WEK7Q2PQf70SSZdo/TfYr3N9wVm/D0kLEFOZeiT1P7XoXQWkxWvDLIgSgSvJH9GQXPodvSLipkaxjBnBpfhbqn/zr6iPunBEhG6NTDRlyERfo04qLMBWoTboS4JLVXHAWjb+Tqf4lWQqvjV5mUxZClMIHq0yjdCZLiXrWC5bSt0lvFzNxhv6ZSKiz7fZcB4JXHDlQGh6aEFE1TQ2D7PhLY+JIEqo/RdSQZ71i+Qt4t3J62GAxeDhoFy9OhtQqtgUn0l3iIIHPe4DwGV3XFT8KjJyllU1JdLHGouoyH7JUQ5bnOkjSe7tEoBaphwvUxPxBX4FpbeGwJL2++VcRg8anAtmIIewqZ8eU1admMD5xo0UHnQ8KdrdIby7tvaxvOyppzVSpayHqJyxAynEG/KYcJY8pJmRErh3jy+QdNg==
+  template:
+    metadata:
+      name: wedding-site-app
+      namespace: wedding

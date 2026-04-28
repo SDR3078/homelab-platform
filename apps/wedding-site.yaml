@@ -1,0 +1,66 @@
+# wedding-site — Anna & Sander wedding site (Next.js + Postgres)
+#
+# Deploys the chart from the tenant repo:
+#   https://github.com/SDR3078/wedding-site/tree/main/helm
+#
+# CI/CD pipeline: every push to main in the tenant repo triggers a
+# GitHub Actions workflow that builds the image, pushes to
+# ghcr.io/sdr3078/wedding-site:<sha>, and bump-commits the new tag into
+# helm/values.yaml in the tenant repo. ArgoCD detects that values change
+# and rolls a new pod here. Image pulls require the 'ghcr-pull' Secret
+# in this namespace, materialized by apps/wedding-site-bootstrap.yaml.
+#
+# Cross-repo source — first ArgoCD Application in this repo pointing at
+# a different GitHub repository. The repo is public, no auth required.
+# The point of the decoupling: the wedding-site can iterate on app code
+# (CSS, content, schema) without touching this repo, and platform
+# changes don't force a chart re-render.
+#
+# Sync-wave 1 — runs after apps/wedding-site-bootstrap.yaml (wave 0)
+# which provides the namespace + sealed secrets the chart's pods depend
+# on (envFrom + imagePullSecrets). On a clean cluster a brief
+# CreateContainerConfigError on first pod schedule is expected and
+# self-heals as soon as the wave-0 Application finishes decrypting.
+#
+# Bootstrap procedure (from-scratch deploy of this app onto the
+# platform): see docs/rebuild.md Step 10, which delegates to
+# charts/wedding-site/namespace.yaml's database-provisioning runbook
+# and the runbooks on each *-sealed.yaml.
+# Tenant-side generic deploy guide:
+#   https://github.com/SDR3078/wedding-site/blob/main/deploy/README.md
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: wedding-site
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/SDR3078/wedding-site.git
+    targetRevision: main
+    path: helm
+    helm:
+      releaseName: wedding-site
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: wedding
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
