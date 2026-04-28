@@ -39,7 +39,12 @@
 #
 #    Record the expiration date here on each rotation:
 #      - Last sealed: 2026-04-28
-#      - Expires:    <fill in from github.com/settings/tokens>
+#      - Expires:    No expiration date set (intentional)
+#
+#    NOTE on no-expiration: classic PATs allow this; fine-grained do
+#    not (max 1 year). No scheduled rotation pressure, but rotation
+#    should still be done voluntarily (annually is a sane cadence)
+#    since long-lived credentials are a persistent compromise vector.
 #
 # 2. Build the plaintext Secret manifest (NOT committed):
 #
@@ -74,10 +79,11 @@
 # allows 'regenerate' on an existing token (issues new credentials,
 # invalidates old) — convenient if you don't want to rename.
 #
-# Failure mode: if the PAT expires without rotation, ImagePullBackOff
-# starts on the next pod restart (existing pods keep running with their
-# already-pulled images). Set a calendar reminder for ~1 month before
-# the expiry date above.
+# Failure mode: with no expiration set, ImagePullBackOff from token
+# expiry is N/A. The PAT can still be REVOKED by the user (intentionally
+# or in response to compromise) — same symptom: ImagePullBackOff on the
+# next pod restart, existing running pods unaffected until they restart.
+# If revoked, rotate via the procedure above.
 # ────────────────────────────────────────────────────────────────────────
 
 ---
