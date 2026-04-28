@@ -22,6 +22,9 @@ You will need:
     needed for master-key-loss recovery; sealed in Git)
   - `homelab-platform/ghcr-pull-pat` (only needed for rotation when
     expiry hits — the token itself is sealed in Git)
+  - `homelab-platform/argocd-wedding-site-repo-pat` (ArgoCD's clone
+    credential for the private wedding-site repo; only needed for
+    rotation — the token itself is sealed in Git)
 - DNS for `*.lab.batzbak.top` (or your domain) resolvable from clients
 - Devbox with `kubectl`, `helm`, `argocd`, `kubeseal`, `mc` CLIs
 

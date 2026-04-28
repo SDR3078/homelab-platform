@@ -1,0 +1,122 @@
+# ArgoCD repository credential for the private wedding-site repo
+#
+# ArgoCD's repo server uses this credential to clone
+# https://github.com/SDR3078/wedding-site (which is a PRIVATE repo)
+# during reconciliation of the wedding-site Application
+# (apps/wedding-site.yaml). Without it, that Application errors with
+# "authentication required: Repository not found" because the
+# unauthenticated GitHub API returns 404 for private repos.
+#
+# Discovery mechanism: ArgoCD's repo server scans the argocd namespace
+# for Secrets carrying the label `argocd.argoproj.io/secret-type=repository`.
+# Each such Secret describes ONE repository's credentials. ArgoCD matches
+# Applications to credentials by repoURL prefix, so this Secret's `url`
+# field must match what apps/wedding-site.yaml uses verbatim
+# (https://github.com/SDR3078/wedding-site.git, including the .git suffix).
+#
+# Token type: fine-grained PAT (NOT classic). Fine-grained is supported
+# by GitHub's git HTTPS auth and offers least-privilege scoping — this
+# token has access to ONE repository and ONE permission (Contents: Read).
+# Classic PATs would require the broader `repo` scope (read+write to all
+# private repos), which is over-privileged for a read-only clone.
+#
+# Why this is sealed (not just kubectl-applied): so that on cluster
+# rebuild, ArgoCD can clone the tenant repo without manual intervention.
+# The encrypted secret in Git decrypts automatically once the
+# sealed-secrets controller is running with the restored master key.
+#
+# ────────────────────────────────────────────────────────────────────────
+# OPERATIONS RUNBOOK — generating and sealing this credential from scratch
+# ────────────────────────────────────────────────────────────────────────
+# 1. Generate a fine-grained PAT on GitHub:
+#
+#      https://github.com/settings/personal-access-tokens/new
+#
+#    - Token name: 'homelab-platform ArgoCD wedding-site repo'
+#    - Expiration: 1 year (or whatever; record date below on each rotation)
+#    - Resource owner: SDR3078 (or the account owning wedding-site)
+#    - Repository access: Only select repositories → SDR3078/wedding-site
+#    - Repository permissions:
+#        Contents: Read-only
+#        (Metadata: Read-only — auto-added by GitHub, leave it)
+#        Everything else: No access
+#    - Generate, copy. Save to password manager as
+#      'homelab-platform/argocd-wedding-site-repo-pat'
+#      (the token is shown ONCE).
+#
+#    Record the expiration date here on each rotation:
+#      - Last sealed: 2026-04-28
+#      - Expires:    <fill in from github.com/settings/personal-access-tokens>
+#
+# 2. Build the plaintext Secret manifest (NOT committed). The
+#    `argocd.argoproj.io/secret-type=repository` label is the trigger
+#    that makes ArgoCD pick up the credential:
+#
+#      read -s -p "Fine-grained PAT: " PAT; echo
+#      cat > /tmp/argocd-wedding-site-repo.yaml <<YAML
+#      apiVersion: v1
+#      kind: Secret
+#      metadata:
+#        name: wedding-site-repo
+#        namespace: argocd
+#        labels:
+#          argocd.argoproj.io/secret-type: repository
+#      type: Opaque
+#      stringData:
+#        type: git
+#        url: https://github.com/SDR3078/wedding-site.git
+#        username: SDR3078
+#        password: ${PAT}
+#      YAML
+#
+# 3. Encrypt with kubeseal. NOTE: kubeseal overwrites the YAML body but
+#    DOES NOT preserve this runbook header. Manually re-prepend the
+#    comment block above before committing:
+#
+#      kubeseal -f /tmp/argocd-wedding-site-repo.yaml \
+#        -w /tmp/argocd-wedding-site-repo-sealed.yaml \
+#        --controller-name=sealed-secrets-controller \
+#        --controller-namespace=sealed-secrets
+#
+# 4. Reassemble (header + sealed body) + shred plaintext + commit + push:
+#
+#      sed '/^---$/,$d' charts/argocd/wedding-site-repo-sealed.yaml > /tmp/header.txt
+#      cat /tmp/header.txt /tmp/argocd-wedding-site-repo-sealed.yaml \
+#        > charts/argocd/wedding-site-repo-sealed.yaml
+#      shred -u /tmp/argocd-wedding-site-repo.yaml \
+#               /tmp/argocd-wedding-site-repo-sealed.yaml \
+#               /tmp/header.txt
+#      git add charts/argocd/wedding-site-repo-sealed.yaml
+#      git commit -m "reseal argocd wedding-site repo credential"
+#      git push
+#
+# Rotation: same procedure when the PAT approaches expiry. GitHub also
+# allows 'regenerate' on an existing fine-grained token (issues new
+# credentials, invalidates old).
+#
+# Failure mode: if the PAT expires without rotation, the wedding-site
+# Application returns to "Repository not found" / authentication errors.
+# The cluster keeps running (existing pods unaffected), but no new
+# image rollouts can sync. Set a calendar reminder for ~1 month
+# before the expiry date above.
+# ────────────────────────────────────────────────────────────────────────
+
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: wedding-site-repo
+  namespace: argocd
+spec:
+  encryptedData:
+    password: AgCsGMwK+BXyWJx4Q7CdLqrysP7uxSC5UUx/3XYflG8xW7ffFc567BwRRl3aI59FoBvQIXdxd23LDzqJgiphiZ/Ty//BU37x90Ep+wrT5Y0PH7fvSLroL/dCYAdAQPizRd/U+ga5r5pcNEjlvIK3qykkjVV7UDx+dyghpNUT/Y7nYIjK7Aj4hUGLOM/JV/L5TIHAhXrZN867j606AftLGmCbvWY1S1woknsd95Uj5NeRZGJ34fpXjO5E06LOMpK6vDCqR34DjFUrH9Kj+/TG6eVxWOvD4E3BF9zBwniIjF70GeM76jrHlYc6nItWs9y6QOUM2dhzdhxTvkx3M3HWbEAovmukH0pl/PPQ2oDSYNE9SB1t971tnFQ+WYFoTAXZrpVx+rSpQuE1wF8F4qH5uS7gcmsopAEU+0kPcZIQ8WW4hxkqxG3jo30/69GTWkI8DJQX0Nvl8kg4UN82J8r4H/SdpS4ZMjLccLHwUzdbEpnAgpxiPqj+7jJoMg3RxvyFupLIr/fkVPil9wgmshUwVjBptom2aHvjAX43gQ47v4bUyy9Uci0mMpETEJGDrvuWRiNcrxs/JD+yxYwTpuL4SgFaPe3aKxaM71GbK7+EVYsafylIdwyTmN4C11NnKTvj0XYu1zTPzwIaV/CTTfhPI6qEgiCEGrlQL8/+VL/03KNl5qr9AZKCLFh6PsLQTlqA5ummskJnFlbhFwyPLdyT2VhM0hy3JnPiExwHZWdl/HVB0EZ4A8+aiRj9mT9Xv/BWzgHWoYgBgzneTJaQOIM8LVGWlL1v3UtxKU805z/IoqHS40SKRaYtQg1ouVt3Vx4=
+    type: AgB7lFRbO1qd5xyqCusvlYjLgeFbKGxMT8sqlqdcoE4E55lmMbnYWjr37vSWT8HQgOvuRDb7siDfN54jZBGbjaMlq10p7Q7VY0kEUqMQlUVgMV22Hyj5iuEmJD4S3mgsuMC3UaCViYfiHYPUkyjC3qxKLfeEVzC5tzBjL8NZmwQypbY6LogCuIynIZ9d9nvGa6hFppcI0g7MK8Xh2mVK+o3gNSPKhn6I177AW0lBxX/OL5U3X/zKMueQR7UyYPcW+fRxzGvv12AYYG4r8ZaZkGIMxcDT3ba1xGAwU1qrc9IosZ5O8nI7SFSW203djyY0tXGfohQCuKKauOrIlkAo9/1jnC2N4odL9wyXdMITOBp/TSQQ7z0mz0a20V4ZiPau+S+8VkZCaHUFEYkVnkRtZHkdoSH3nXSOjWQuZ4a1nSOx8ZZM1S0vFZjMjoIKTlavu1BGq+7PKa1OyUz7g1iSu+Ekbpqw/xBLfhWz3lYB+8NRC5tbmgR/uCP8jhS5GbYrmFLhJ3oeFjkmBwAzI7EvmKPMEJz2IjtkhK9eaZGfsCv4hxB2VYzhep7AcDaPCc/r2X5vjIIJOIwrJOnC1b+cISzbI/Bn9B/dKQfN3RDILaUFC19gFTHhqkFAwRgn04fzsymzDq9yEZCRAtgsGLnZ6+GskOg853nr24BVpEPyeDCdcAi+QKNNvDfIhh+eqnfvQWnlwxs=
+    url: AgCjCqUWA/Ful+VTr2/ElQQAafnnhsSGfFHw/8dDsTbb9UjgLvYNJuDvdMCIUAatB70LHbyU2cjW2sXhcl59a194kSVC3w8LuuGLP0iybXgK4HJ0jz3aJpyx65uPBjD6WWVyvv2OTGV1ReNWPtkUAfxL5VIiK7Ej5UI/eg0SaAQBzEZ47Ai/drnRg8Vl/R+4C8iUWJ2URsmxZSLtzbOEC4N9AHFpNF/7jBZcFt9ei1LGZ/WYFqrewz8ssKFL1CzdKNrA4NRjIZLXud24DYqw6KYDxSXjyv8rUAB3bsxfnapFk6gGM0tAkJYaq8fCzDSpIneJIdo+evDIZGoZCnIvt2P6RDLcJFBriiP1kcigR1rxtZp5ynEdEAf1RNCAHa4Lfp6awMlua9qEO+RIrK1kCB3Yeia2qYuRVmoiyJ5AwOE0i28x11lTwizfl0aqdCB5kDQif9NfjCHKUSGbtWvblPIJPeQOQUCPPCHiNylRl8NU7Sc+vvLY2K6Av05k3u6Uxk1UAdmN8ijNKMRCPOePL2hq7Jrzaz4kXP7hqFAwczc2QxhAMmwgjjzRY+R9QK3zTqaHoXh9sa8TKznT+JPai6+pvTGIwb5i0sxK+IWkOwC/FDwVEGFHBj7JsiuSG5RbEMVno5hnFIV2AvfmbuEC6G0sY479Hlu44LvfroTxdF7lzen9OI5PAA+IVoOaqYfuRFRw06A5rB0u4dQGtHsxXmn65ghO0HvjeJPZ1TNcpGXkUDnYZHjTbHGYTGiU
+    username: AgC5wUPJ/nUzVlKZmKPvCxR2JVCI8zEXpORROcd/4etrwUgdO2rA6YtnzGYm6TQ7AhXGhCKESxb0/LbJduMJrDbyYpf77Yr/xs8chK3gcSYeQ6dyvhMjyiDhq00e9N21OjrCkyDGBD66l0kqK+nY+YCn7Tkw2edDUzfnxxxi0TUkJnCnXqpxoAkZRof2QXPXPm+goVuU4ceocunGWX9nUPu++xJMI7OIDuLt0sLpb3dp1Qjk4lON35SssHgDXSt6yc6Mr+XS/Hq2rqh64gFOm9B+A8gAjzbC5YZGOfmWdmt16h4belR6mLAaUNzclYN3i01WFhU51qulDqqOlR706QFSB70zV7OWDPRABSrBb44vsTkSw8MLpZp53BAav7ktZYx+PbvYnY3pELDUxrns/HxumhZf7bYDiQLpqSM7p5zCHFvl8EC0O3gHlg4cq5Ol1J9sb0ddXABWGhGZ5zC/tqpiaWiA0voIxu0zSXny09vJXwMgmf4WvP/0K/kGmtv3ndJsy9dGO6lNKOThf1UBiKqt91iP6X/h45a8nlZzafnmds9m767DeHc3lN4gJ8eNg6P2OXF5D1SFTanuYBpVrWKHAq2ikYBzdFlw2VXmobbYYLExln6n0kkpCPvxHdAUmW/jTNOB0O3PnPT3pe38nxLgOq0l7ZyWehM5Jj0RJhZfJzXNzByd/flPjJxcfV6Q/jJq9d2fX9q0
+  template:
+    metadata:
+      labels:
+        argocd.argoproj.io/secret-type: repository
+      name: wedding-site-repo
+      namespace: argocd
+    type: Opaque
