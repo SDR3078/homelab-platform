@@ -46,7 +46,12 @@
 #
 #    Record the expiration date here on each rotation:
 #      - Last sealed: 2026-04-28
-#      - Expires:    <fill in from github.com/settings/personal-access-tokens>
+#      - Expires:    No expiration date set (per github.com/settings/personal-access-tokens)
+#
+#    NOTE: GitHub historically capped fine-grained PATs at 1 year max.
+#    If the UI ever shows a forced expiry on rotation (policy change),
+#    fill in the actual date here so calendar reminders can track it.
+#    Voluntary annual rotation is a sane cadence regardless.
 #
 # 2. Build the plaintext Secret manifest (NOT committed). The
 #    `argocd.argoproj.io/secret-type=repository` label is the trigger
@@ -94,11 +99,13 @@
 # allows 'regenerate' on an existing fine-grained token (issues new
 # credentials, invalidates old).
 #
-# Failure mode: if the PAT expires without rotation, the wedding-site
-# Application returns to "Repository not found" / authentication errors.
-# The cluster keeps running (existing pods unaffected), but no new
-# image rollouts can sync. Set a calendar reminder for ~1 month
-# before the expiry date above.
+# Failure mode: with no expiration set, expiry-driven freeze is N/A.
+# The PAT can still be REVOKED (intentionally or in response to
+# compromise) — same symptom: wedding-site Application returns to
+# "Repository not found" / authentication errors. Cluster keeps
+# running (existing pods unaffected), but no new image rollouts can
+# sync until the credential is regenerated. Rotate via the procedure
+# above.
 # ────────────────────────────────────────────────────────────────────────
 
 ---
