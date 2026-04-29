@@ -1,7 +1,7 @@
 # wedding-site app runtime secret
 #
 # Holds the runtime config the wedding-site Next.js app reads via envFrom
-# (see helm/templates/deployment.yaml in the tenant repo). Two keys:
+# (see helm/templates/deployment.yaml in the tenant repo). One key:
 #
 #   - AUTH_SECRET — Auth.js JWT signing/encryption key. Rotating it
 #     invalidates all active sessions, so it's effectively a long-lived
@@ -9,18 +9,17 @@
 #     'homelab-platform/wedding-site-auth-secret' for DR (master-key-loss
 #     recovery requires regenerating from this value).
 #
-#   - ADMIN_USER_IDS — comma-separated list of users.id values authorised
-#     to access /admin. Empty at first deploy (chicken-and-egg: the user
-#     row doesn't exist until you sign in once with an invite code). See
-#     "ADMIN_USER_IDS chicken-and-egg" below.
-#
-# DATABASE_URL is NOT in this secret. It is composed at container startup
-# via Kubernetes $(VAR) substitution from the wedding-credentials secret
-# (reflected from charts/application-data/wedding-credentials-sealed.yaml
-# in this repo) plus the database.* values in the tenant chart's
-# helm/values.yaml. Rotating the DB password = reseal wedding-credentials
-# in charts/application-data/; both the CNPG-managed role and the composed
+# DATABASE_URL is composed at container startup via Kubernetes $(VAR)
+# substitution from the wedding-credentials secret (reflected from
+# charts/application-data/wedding-credentials-sealed.yaml in this repo)
+# plus the database.* values in the tenant chart's helm/values.yaml.
+# Rotating the DB password = reseal wedding-credentials in
+# charts/application-data/; both the CNPG-managed role and the composed
 # DATABASE_URL pick up the new value on next pod restart.
+#
+# Admin status is NOT in this secret. It lives in the users.isAdmin DB
+# column on postgres-tenants/wedding (see src/db/schema/auth.ts in the
+# tenant repo). Toggle it via SQL UPDATE — no reseal, no pod restart.
 #
 # ────────────────────────────────────────────────────────────────────────
 # OPERATIONS RUNBOOK — generating + sealing this secret from scratch
@@ -36,7 +35,6 @@
 #      kubectl create secret generic wedding-site-app \
 #        --namespace wedding \
 #        --from-literal=AUTH_SECRET="${AUTH_SECRET}" \
-#        --from-literal=ADMIN_USER_IDS="" \
 #        --dry-run=client -o yaml > /tmp/wedding-site-app.yaml
 #
 # 3. Encrypt with kubeseal — overwrites THIS file's encryptedData block:
@@ -57,26 +55,11 @@
 #      git commit -m "reseal wedding-site-app"
 #      git push
 #
-# ADMIN_USER_IDS chicken-and-egg: at first deploy ADMIN_USER_IDS is
-# empty — no user.id can exist yet. Strategy:
-#   1. First deploy with ADMIN_USER_IDS="". App boots; nobody is admin.
-#   2. Sign in with an invite code (created via `npm run invite:create`
-#      from the tenant repo, run against the deployed DB via port-forward).
-#      The first-login flow creates a `user` row in the wedding DB and
-#      binds it to the invite.
-#   3. Look up the id:
-#        kubectl port-forward -n application-data svc/postgres-tenants-rw 5433:5432 &
-#        # password is in password manager as 'homelab-platform/postgres-tenants-wedding'
-#        psql "postgresql://wedding:<pw>@localhost:5433/wedding" \
-#          -c 'SELECT id, name FROM "user";'
-#   4. Re-run steps 1-4 above with --from-literal=ADMIN_USER_IDS="<that id>".
-#      ArgoCD applies the new sealed Secret; controller decrypts; pod
-#      restarts (envFrom snapshot is read at container start, so a
-#      Deployment rollout is required for the new value to take effect).
-#
 # Rotation of AUTH_SECRET: same procedure from step 1.
 # Rotation of the DB password: reseal wedding-credentials in
 # charts/application-data/, NOT this file.
+# Admin add/remove: SQL UPDATE on users.isAdmin in postgres-tenants/wedding,
+# NOT this file.
 # ────────────────────────────────────────────────────────────────────────
 
 ---
@@ -87,8 +70,7 @@ metadata:
   namespace: wedding
 spec:
   encryptedData:
-    ADMIN_USER_IDS: AgDOMo9tSF9dDRVGoZeaz3/QxGYvMlvFFmI/V0I6e1VxbgMujh7pbp4aDMebp+esiYcirVbtuEcj86ChVGu+X+seEy7Y2hMIVhaZke1pUZXVuh3HOaZFjNgYsANC8U1nKeOr7rQtMDj5zLLDDlH1SHcHBkuuBkIyozcbDZkeemY3dlccGrTatEUtf1N+smxQBNrR9LYUSiDtyiLas7omJfmL16owMH7OFuMCc839m2wgUE/ReQwDa+I5x4D42sfptGSJC2M6W8R1CIJ5FTRSh/1226x3aq4jYxQkqAaRHZHm9srpld1vT+sfVLg31KTB4sxvdaSIs3QPDmrEJzf2qG16sJEcNz8k/MIPFv9XIsKG2vp7L0pxErJ2hrUSqV8MVyYrZOUqAlIYZfIRdfhLF8HUl0dIHxoHRwS01vekxvLTzzC661+A9P7EZcc5UvQvLdRqcdIs5nm4kk8A5B4QhxtA5M6+ztU/Gmqsgzxd6wfxD9mu5uLQkHc+sfZsA0x9JA+oSrPaf+J7iuARAAyRGOzL3WK9c0Zm90VwyFGCvaLs3b3KFVQQeS7TBdJeHp8RiSE4iT4kkPNJ/QYLygCjaSbSYkrH/HdOkM/emEEYDWJpa0l8VuPzNtFs6FPcIAUyl5klpyqHdvL8lHdMS4+e2mEektfiDJ5wFTs6wq6EgxrG5OgMF4D17DJvvU6J3xS2AVRvlNr4LwwQUlKaeAactz/B/YhpB417Z+OQK/d+wNcH3BU5Uac=
-    AUTH_SECRET: AgB6NUxbx6fR4e0KCs/BWrYfz6PfY518aWM0C5ozZfxh5dn3FTMwTOcYi2wqC5A2urLK4iKCdsvIy8hreLbtEicJhcjdPnr2ggpHvZwr4l92FsujBLUuTPvYYpEfXeaQ1J6LLGt+0I96wA2Pi2C1+3tBDlhrI75/blUQ+7FlAqjGbO/26Xu6VGfmaMESp+th+J4AuwA/jOZtxyH3nog11D8Z2tkiktMvg21Aq+0i9e2Ry896g7wEmref1M15fu20oECZa+0QR/g/VFD3q/YgLMxRkfFb+vg3UQvu4oByYYyUP5HrV0W8MigLvI86nZCrT6aHZMMGofCPkWfW4aDmUSfmhwtj088K5+vV02xgIb1TfHwpCw6ZUinr6ydwEvJu3lPopTU7N9x7HNvs7bmJNVYs+g2FV8gDijIrNoXVrYyitj142YrdAEY8Pzh3OPUi7dLPZrSU8Md0HwcJ9Uv7L7kGp0GFsH4yq5fp41ZM6a+9KKE5l+P8SJUHGdzcRI83STmNo/XsK9MxrbnWW69C6VMKCq13jTJKOKFuDO/QXAnaWKd3pP3rkOti8xpLuwgZCSnwvmOIoThgvdxoELrtiGdFKibQ3AsZDPefl/cvuQYwLNBUBR2LRoQfPkyJMeI4SIwmRfDXRBYUka+h5dPVQhuVLCh1VZWJFhQLkqm+0Z4suN3P5TOAAIvYLvFVEyNRTYCYza3gufoFp4rH5Af/yNokYp8WMVdNe0jw4gS+1iVFng7rqsXgXSwFJmYXQA==
+    AUTH_SECRET: AgCACXGhaJCu1BXlPC+MmjtP/rWudeOT3fBnqSnywqemX7nArDZqSTWAHMdAJ5IO/h6X3ckPxWsdGg2ZTEj+w+YSmIQp2mS40/jBr0gBX9dBnGmqZrq7mch9PVdMK902wgvRhIhSOFvb/m7XEG4u6HLi/gI/opVDrZz8fmiv/4L/w+7dLc43Lr5xGyXc1UNAqi+NQLm9LRvmHDHRDCTw6g7l7g7IOI2fAhEM+vPhMylcJXp0GL3KYz7nX0RXD/6YEYQJy1Khdx2I62jb6i+iRowG24iQqJwp1jYBFyOxJ1soXMszObl8m6ybiOQ6eym3uGEmF3U9Pz0+EUdZzBI1LJmeTfiwKY10hhAIqCSPg30yRmZbpshSoIiFPCVWNwmQew8sRJXJgj9ucOHrXLDZwXKBIGZVIvgEdjXcJ+8oR9rbJx1ocQ73Q8xSab3zzf+DNAPQ65LOUoI1yE2C6Zfg+H17uM9WflttZl4JVQikicDXPJ71PpfInAB01Bqj8ROVJgCQ3MzNxJVtrLIHLj0uIu8izo+tHjCpw1YYWwyAVwdR+nrsVi2WSq7p/MhJwrQr/A1WQQvKpIhtFqSTEaaFhFu+CeNkO20wSLYTtFjVjAxPsVbiz1IaeQsSK09dpC7muzVSbC0YVqyLfxErN9eVdDB1WYp5HuT/uSWz4FY0WPlIJQCTnkinp7BF6TKcyZu9ApLX4i/Bv9Ni9pjMz47aRqyy1l9mtmkW+LkGDceWMjN4YJ8tR6wP/ILDMvxC+A==
   template:
     metadata:
       name: wedding-site-app
