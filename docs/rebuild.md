@@ -17,7 +17,7 @@ You will need:
   - `homelab-platform/postgres-backup-svcacct`
   - `homelab-platform/cloudflare-api-token` (only needed for rotation or
     master-key-loss recovery — the token itself is sealed in Git)
-  - `homelab-platform/wedding-db` (the wedding-site CNPG role password)
+  - `homelab-platform/postgres-tenants-wedding` (the wedding-site CNPG role password)
   - `homelab-platform/wedding-site-auth-secret` (Auth.js JWT key — only
     needed for master-key-loss recovery; sealed in Git)
   - `homelab-platform/ghcr-pull-pat` (only needed for rotation when
@@ -89,9 +89,14 @@ Within 5-10 minutes ArgoCD will:
 - cert-manager, ingress-nginx, reflector come up
 - CNPG operator + MinIO operator install
 - data-platform Application syncs:
-  - Postgres Cluster + Databases (3 logical DBs)
+  - Postgres Cluster (postgres-data-platform) + Databases for first-party
+    services (mlflow / dagster / lakekeeper)
   - MinIO Tenant + 4 buckets
   - Real Secrets materialize from sealed counterparts
+- application-data Application syncs (tenant data tier):
+  - Postgres Cluster (postgres-tenants) + Databases for tenant apps
+    (wedding, etc.)
+  - Per-tenant role credentials reflected into each tenant's namespace
 
 Expected transient state: Postgres backups will FAIL in this window
 because `postgres-backup-credentials` authenticates against an svcacct
@@ -104,9 +109,11 @@ not a defect.
 ```bash
 kubectl get application -n argocd
 kubectl get pods -n data-platform
+kubectl get pods -n application-data
 ```
 
-All Applications `Synced/Healthy`, both Postgres and MinIO pods Running.
+All Applications `Synced/Healthy`. Both Postgres Clusters
+(postgres-data-platform, postgres-tenants) and the MinIO Tenant Running.
 
 ### 7. Recreate the MinIO postgres-backup service account
 
@@ -190,21 +197,41 @@ Currently deployed tenant apps:
 
 Per-tenant rebuild shape (after Step 9 finishes):
 
-1. **Provision the tenant's database + role on CNPG.** Procedure
-   documented inline in `charts/<app>/namespace.yaml`'s OPERATIONS
-   RUNBOOK header — psql heredoc + port-forward + the tenant repo's
-   `npm run db:push` (or migration equivalent).
+1. **Database tier comes up automatically.** The application-data
+   Application materializes `postgres-tenants` with all per-tenant roles
+   + Databases declared in `charts/application-data/postgres-tenants-cluster.yaml`'s
+   `managed.roles` and Database CRDs. No imperative provisioning. The
+   sealed credentials in `charts/application-data/<tenant>-credentials-sealed.yaml`
+   are decrypted by the controller and reflected into each tenant's
+   namespace as `<tenant>-credentials`.
 
-2. **Re-seal any tenant-specific runtime secrets.** Each `*-sealed.yaml`
-   in `charts/<app>/` has a full kubeseal procedure inline. Plaintext
-   recovery inputs (DB password, Auth.js secret, GHCR PAT, etc.) come
-   from the password manager entries listed in Prerequisites.
+2. **Re-seal any non-DB tenant secrets** (Auth.js secret, GHCR PAT, etc.)
+   if the master-key was lost. Each `*-sealed.yaml` in `charts/<app>/`
+   has a full kubeseal procedure inline. Plaintext recovery inputs come
+   from the password manager entries listed in Prerequisites. (DB
+   passwords are sealed in `charts/application-data/`; reseal there if
+   needed, NOT in the tenant chart directory.)
 
-3. **Push.** Both Applications were already in `apps/`, so ArgoCD
-   reconciles them automatically — bootstrap (wave 0) creates the
-   namespace and decrypts SealedSecrets, then the chart Application
-   (wave 1) applies the Deployment. Brief `CreateContainerConfigError`
-   on first pod schedule is expected (~30s) and self-heals.
+3. **First-time schema push.** Tenant chart Applications come up healthy
+   only once the tenant DB has the expected schema. For a fresh rebuild,
+   port-forward into `postgres-tenants-rw` on `application-data` and
+   run the tenant repo's `npm run db:push` (or migration equivalent)
+   once per tenant:
+
+   ```bash
+   kubectl port-forward -n application-data svc/postgres-tenants-rw 5433:5432 &
+   # password from password manager: 'homelab-platform/postgres-tenants-<tenant>'
+   cd /path/to/<tenant>
+   DATABASE_URL="postgresql://<tenant>:<pw>@localhost:5433/<tenant>" \
+     npm run db:push
+   ```
+
+4. **Tenant chart Applications already in `apps/`** reconcile
+   automatically — bootstrap (wave 0) creates the namespace + reseals,
+   chart Application (wave 1) applies the Deployment. Brief
+   `CreateContainerConfigError` on first pod schedule is expected (~30s)
+   and self-heals once the reflected `<tenant>-credentials` Secret
+   propagates.
 
 Tenant-side generic deploy guide (placeholders that any deployer fills
 in for their cluster — the homelab-platform-specific values live in
