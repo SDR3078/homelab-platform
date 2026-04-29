@@ -35,6 +35,14 @@ metadata:
   labels:
     app.kubernetes.io/name: postgres-backup-ca
     app.kubernetes.io/part-of: homelab-platform
+  annotations:
+    # Mirror this Secret to the application-data namespace so the
+    # postgres-tenants Cluster's barmanObjectStore endpointCA can read it.
+    # Append namespaces (comma-separated) when new data tiers come online.
+    reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
+    reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: "application-data"
+    reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
+    reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "application-data"
 type: Opaque
 stringData:
   ca.crt: |

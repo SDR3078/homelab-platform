@@ -1,0 +1,30 @@
+# application-data namespace
+#
+# Houses the shared Postgres Cluster (postgres-tenants) consumed by tenant
+# applications. Each tenant app lives in its own namespace (wedding,
+# future portfolio-chatbot, etc.) and reaches in via cross-namespace DNS:
+#   postgres-tenants-rw.application-data.svc.cluster.local
+#
+# Boundary vs data-platform: this namespace is the data tier for TENANT
+# applications. First-party platform services (mlflow, dagster, lakekeeper)
+# consume data-platform's postgres-data-platform Cluster instead. The split
+# isolates tenant apps' load profile (public traffic, per-app lifecycle)
+# from platform services' load profile (internal pipelines, batch ETL).
+#
+# Pod Security Admission: 'baseline' (matches data-platform). CNPG's
+# postgres pod needs fsGroup, so 'restricted' would block it. Tenant app
+# pods stay in their own restricted namespaces; only the data tier is
+# baseline.
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: application-data
+  labels:
+    app.kubernetes.io/name: application-data
+    app.kubernetes.io/part-of: homelab-platform
+    app.kubernetes.io/managed-by: argocd
+
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted

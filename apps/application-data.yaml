@@ -1,0 +1,69 @@
+# application-data — namespace + tenant data tier
+#
+# ArgoCD Application owning the shared Postgres Cluster used by tenant
+# applications (wedding-site today, portfolio-chatbot later, etc.).
+#
+# Mirrors data-platform's Application structure. The two Applications
+# split by trust / lifecycle boundary:
+#   data-platform     — first-party platform services (mlflow, dagster,
+#                        lakekeeper) sharing postgres-data-platform
+#   application-data  — tenant applications sharing postgres-tenants
+#
+# Tenant app namespaces (wedding, etc.) live separately and consume this
+# Cluster via cross-namespace DNS + reflected role credentials.
+#
+# Sync-wave 1: this Application depends on
+#   - cloudnative-pg (wave 0) for the Cluster + Database CRDs
+#   - data-platform (wave 0 implicit) for postgres-backup-credentials and
+#     postgres-backup-ca, which reflector mirrors into this namespace.
+# ArgoCD's automatic retry handles the cross-application dependency: the
+# initial Cluster apply may fail until reflector propagates the backup
+# credentials, and retries succeed within seconds.
+#
+# NOT setting CreateNamespace=true. The Namespace is declared in
+# charts/application-data/namespace.yaml so it can carry PSA labels.
+#
+# ignoreDifferences mirrors data-platform's pattern: the CNPG operator
+# post-applies dozens of default fields onto Cluster spec via legacy
+# update writes (NOT ServerSideApply), so managedFieldsManagers filtering
+# doesn't work — fall back to a path-based ignore on .spec.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: application-data
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/SDR3078/homelab-platform.git
+    targetRevision: main
+    path: charts/application-data
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: application-data
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+
+  ignoreDifferences:
+    - group: postgresql.cnpg.io
+      kind: Cluster
+      jqPathExpressions:
+        - .spec

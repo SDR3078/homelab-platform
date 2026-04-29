@@ -1,0 +1,220 @@
+# CNPG Cluster + per-database resources for the application-data tier
+#
+# Single Postgres instance ('postgres-tenants') shared across tenant
+# applications consuming the platform. Each tenant has its own owner role,
+# isolated by Postgres-level permissions; roles' passwords are sealed
+# alongside this file as separate SealedSecret resources.
+#
+# What this file declares:
+#   1× Cluster        — the Postgres instance (1 pod, 5Gi PVC, tuned for
+#                       ~512Mi memory budget) with backup to MinIO via
+#                       barman + continuous WAL archive (shares the
+#                       postgres-backups bucket; serverName 'postgres-tenants'
+#                       keeps it under its own path)
+#   1× Database       — declarative CREATE DATABASE wedding
+#                       (more entries added as new tenants land)
+#
+# What CNPG auto-materializes (NOT in this file):
+#   StatefulSet, PVC, Services (-rw, -ro, -r), Secrets (superuser, app,
+#   server-cert, ca, client-cert), ConfigMap, PodDisruptionBudget.
+#
+# Sync-wave: this file lives in the application-data Application
+# (sync-wave 1), so it applies after both the cloudnative-pg Application
+# (CRDs) and the data-platform Application (which owns the source
+# postgres-backup-credentials + postgres-backup-ca Secrets that reflector
+# mirrors into this namespace).
+#
+# ────────────────────────────────────────────────────────────────────────
+# OPERATIONS RUNBOOK — adding a new tenant role+DB
+# ────────────────────────────────────────────────────────────────────────
+# Each tenant gets its own role here. The 'managed.roles' block below
+# references one Secret per tenant: <tenant>-credentials, in this same
+# namespace, sealed into Git as <tenant>-credentials-sealed.yaml.
+#
+# Each sealed credential carries reflector annotations so the unsealed
+# Secret is mirrored into the tenant's app namespace, where the app pod
+# composes its DATABASE_URL using $(VAR) substitution at startup (see
+# tenant chart deployment.yaml).
+#
+# Adding a new tenant (procedure):
+#
+#   # 1. Generate a strong password
+#   role=wedding         # change for each new tenant
+#   tenant_ns=wedding    # the tenant app's namespace (where reflector mirrors to)
+#   pw=$(openssl rand -base64 32 | tr -d '=+/' | head -c 32)
+#
+#   # 2. Construct the Secret manifest with reflector annotations baked in
+#   #    (NOT committed). The annotations tell reflector to mirror the
+#   #    unsealed Secret into the tenant's app namespace.
+#   cat > "/tmp/${role}-credentials.yaml" <<EOF
+#   apiVersion: v1
+#   kind: Secret
+#   type: Opaque
+#   metadata:
+#     name: ${role}-credentials
+#     namespace: application-data
+#     annotations:
+#       reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
+#       reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: "${tenant_ns}"
+#       reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
+#       reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "${tenant_ns}"
+#   stringData:
+#     username: ${role}
+#     password: ${pw}
+#   EOF
+#
+#   # 3. Encrypt with kubeseal — produces a SealedSecret safe for Git.
+#   #    --merge-into ensures the resulting SealedSecret preserves the
+#   #    template.metadata.annotations so the unsealed Secret carries
+#   #    the reflector annotations.
+#   kubeseal -f "/tmp/${role}-credentials.yaml" \
+#     -w "charts/application-data/${role}-credentials-sealed.yaml" \
+#     --controller-name=sealed-secrets-controller \
+#     --controller-namespace=sealed-secrets
+#
+#   # 4. Save the plaintext password to your password manager under
+#   #    "homelab-platform / postgres-tenants-${role}".
+#
+#   # 5. Clean up the plaintext (avoid shell-history leak)
+#   shred -u "/tmp/${role}-credentials.yaml"
+#
+#   # 6. Add the role to managed.roles below + add a Database resource.
+#   #    Commit the three changes (sealed secret + role + database).
+#   #    ArgoCD picks them up; sealed-secrets controller decrypts; CNPG
+#   #    creates the role and database; reflector mirrors the secret
+#   #    into the tenant's namespace.
+#
+# Rotation: regenerate password, reseal, commit. CNPG runs ALTER ROLE on
+# next sync. The reflected secret in the tenant ns updates automatically;
+# the app pod's DATABASE_URL is composed live at startup from the secret,
+# so the new password takes effect on the next pod restart.
+# ────────────────────────────────────────────────────────────────────────
+#
+# ────────────────────────────────────────────────────────────────────────
+# OPERATIONS RUNBOOK — backup credentials (reflected from data-platform)
+# ────────────────────────────────────────────────────────────────────────
+# This Cluster shares the MinIO postgres-backups bucket with
+# postgres-data-platform. The backup credentials and CA cert are NOT
+# sealed in this chart — they're reflected from data-platform via
+# emberstack/reflector:
+#
+#   data-platform/postgres-backup-credentials  → application-data
+#   data-platform/postgres-backup-ca            → application-data
+#
+# The annotations enabling this live on the source files
+# (charts/data-platform/postgres-backup-{credentials-sealed,ca}.yaml).
+# When adding a new data tier namespace, append it to BOTH source files'
+# reflector.v1.k8s.emberstack.com/reflection-{allowed,auto}-namespaces
+# allowlists.
+#
+# serverName 'postgres-tenants' below isolates this Cluster's backup data
+# from postgres-data-platform's. Per CNPG docs: multiple Clusters can share
+# one bucket safely as long as serverName matches the Cluster name.
+# ────────────────────────────────────────────────────────────────────────
+
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: postgres-tenants
+  namespace: application-data
+spec:
+  # Single instance — same single-node k3s reasoning as
+  # postgres-data-platform. Bump to 3 instances if/when we go multi-node.
+  instances: 1
+
+  # Pin Postgres image. Mirrors data-platform's pin so both Clusters track
+  # the same major version through upgrades.
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.3-system-trixie
+
+  # 5Gi PVC — half of data-platform's 10Gi. Tenant workload sizes are
+  # small (wedding RSVPs in the kilobytes); bump if a tenant grows past 1Gi.
+  storage:
+    size: 5Gi
+    storageClass: local-path
+
+  # Smaller resource budget than data-platform — tenant workloads are
+  # request/response (Auth.js sessions, RSVP forms) rather than long-running
+  # ETL/training loads.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+
+  # Postgres parameters scaled to the 512Mi memory budget (~half the
+  # numbers used in data-platform's 1Gi budget).
+  postgresql:
+    parameters:
+      # Postgres's own buffer pool — ALLOCATED upfront. ~25% of memory limit.
+      shared_buffers: "128MB"
+
+      # PLANNER HINT only (not allocated) — tells the planner how much
+      # combined PG + OS page cache to assume. ~75% of memory limit.
+      effective_cache_size: "384MB"
+
+      # Per-operation memory for sorts/hashes. Conservative.
+      work_mem: "4MB"
+
+      # For VACUUM, CREATE INDEX, ALTER TABLE.
+      maintenance_work_mem: "64MB"
+
+  # Bootstrap (runs once, when the Cluster is first initialized).
+  # 'app' is a CNPG placeholder — real tenant databases come via the
+  # Database resources below.
+  bootstrap:
+    initdb:
+      database: app
+      owner: app
+
+  # Backup config — barman writes base backups + WAL stream to MinIO.
+  # Credentials + CA are reflected from data-platform (see runbook above).
+  # serverName 'postgres-tenants' keeps this Cluster's data under its own
+  # bucket prefix, isolated from postgres-data-platform's path.
+  backup:
+    retentionPolicy: "7d"
+    barmanObjectStore:
+      destinationPath: s3://postgres-backups/
+      endpointURL: https://minio.data-platform.svc.cluster.local
+      endpointCA:
+        name: postgres-backup-ca
+        key: ca.crt
+      s3Credentials:
+        accessKeyId:
+          name: postgres-backup-credentials
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: postgres-backup-credentials
+          key: ACCESS_SECRET_KEY
+      serverName: postgres-tenants
+      data:
+        compression: gzip
+      wal:
+        compression: gzip
+
+  # Declarative role management. One entry per tenant; role's password
+  # lives in the corresponding sealed Secret (see runbook above).
+  managed:
+    roles:
+      - name: wedding
+        ensure: present
+        login: true
+        passwordSecret:
+          name: wedding-credentials
+
+# ────────────────────────────────────────────────────────────────────────
+# Per-database resources — declarative CREATE DATABASE
+# ────────────────────────────────────────────────────────────────────────
+
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: wedding
+  namespace: application-data
+spec:
+  cluster:
+    name: postgres-tenants
+  name: wedding         # actual database name (CREATE DATABASE wedding)
+  owner: wedding        # role from managed.roles above
