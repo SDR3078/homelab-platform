@@ -111,6 +111,68 @@
 # from postgres-data-platform's. Per CNPG docs: multiple Clusters can share
 # one bucket safely as long as serverName matches the Cluster name.
 # ────────────────────────────────────────────────────────────────────────
+#
+# ────────────────────────────────────────────────────────────────────────
+# OPERATIONS RUNBOOK — first-sync race with reflector
+# ────────────────────────────────────────────────────────────────────────
+# On a fresh rebuild (or the very first introduction of a new data tier
+# namespace to data-platform's reflector allowlists), the postgres-tenants
+# pod can race the reflector: ArgoCD applies the Cluster (this file) in
+# parallel with reflector observing the source secrets' updated allowlists.
+# If the postgres-tenants pod starts BEFORE postgres-backup-credentials
+# and postgres-backup-ca have been mirrored into application-data, the
+# CNPG instance manager initialises its config cache without backup
+# config and never retries. WAL archive fails forever with
+# `failed to get envs: cache miss` and the Cluster condition
+# `ContinuousArchiving=False`.
+#
+# Symptoms (post first sync):
+#   - Cluster reports Healthy, but:
+#       kubectl get cluster postgres-tenants -n application-data \
+#         -o jsonpath='{.status.conditions[?(@.type=="ContinuousArchiving")].status}'
+#     returns "False".
+#   - kubectl get backup -n application-data shows phase
+#     `walArchivingFailing` on the immediate-on-deploy Backup CR.
+#   - postgres-tenants-1 logs spam `failed to run wal-archive command:
+#     failed to get envs: cache miss`.
+#   - /controller/ inside the pod is missing `backup/` and
+#     `wal-archive-spool/` subdirs (a working pod has them).
+#
+# Fix: confirm secrets are present, then restart the pod. The replacement
+# starts cleanly with the (now-mirrored) secrets and populates its cache:
+#
+#   # 1. Confirm the reflected secrets landed
+#   kubectl get secret -n application-data | grep postgres-backup
+#   # expect: postgres-backup-credentials AND postgres-backup-ca
+#
+#   # 2. Restart the pod (StatefulSet recreates immediately)
+#   kubectl delete pod postgres-tenants-1 -n application-data
+#
+#   # 3. Wait ~30s; verify ContinuousArchiving flips to True
+#   kubectl get cluster postgres-tenants -n application-data \
+#     -o jsonpath='{.status.conditions[?(@.type=="ContinuousArchiving")]}'
+#
+#   # 4. Trigger a fresh base backup so the failed ScheduledBackup CR
+#   #    isn't the most recent — also exercises the path end-to-end:
+#   kubectl apply -f - <<EOF
+#   apiVersion: postgresql.cnpg.io/v1
+#   kind: Backup
+#   metadata:
+#     name: postgres-tenants-manual-$(date +%Y%m%d-%H%M%S)
+#     namespace: application-data
+#   spec:
+#     cluster:
+#       name: postgres-tenants
+#     method: barmanObjectStore
+#   EOF
+#
+#   # 5. Delete the stale failed Backup CR (it remains in
+#   #    `walArchivingFailing` because its status snapshot is from the
+#   #    pre-restart pod):
+#   kubectl get backup -n application-data \
+#     -o jsonpath='{range .items[?(@.status.phase=="walArchivingFailing")]}{.metadata.name}{"\n"}{end}' \
+#     | xargs -r -I{} kubectl delete backup -n application-data {}
+# ────────────────────────────────────────────────────────────────────────
 
 ---
 apiVersion: postgresql.cnpg.io/v1

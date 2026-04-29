@@ -115,6 +115,21 @@ kubectl get pods -n application-data
 All Applications `Synced/Healthy`. Both Postgres Clusters
 (postgres-data-platform, postgres-tenants) and the MinIO Tenant Running.
 
+**Known race on first sync:** if `postgres-tenants` shows
+`ContinuousArchiving=False` (`failed to get envs: cache miss`), the pod
+started before reflector mirrored `postgres-backup-credentials` +
+`postgres-backup-ca` into `application-data`. Fix:
+
+```bash
+kubectl delete pod postgres-tenants-1 -n application-data
+```
+
+The replacement pod finds the now-reflected secrets and populates its
+config cache cleanly. Full procedure (including manual backup trigger
+to flush the stale failed Backup CR) is in
+`charts/application-data/postgres-tenants-cluster.yaml`'s runbook header
+under "first-sync race with reflector".
+
 ### 7. Recreate the MinIO postgres-backup service account
 
 This is a chicken-and-egg unique to MinIO: the sealed credentials in Git
