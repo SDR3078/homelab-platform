@@ -20,6 +20,10 @@ You will need:
   - `homelab-platform/postgres-tenants-wedding` (the wedding-site CNPG role password)
   - `homelab-platform/wedding-site-auth-secret` (Auth.js JWT key — only
     needed for master-key-loss recovery; sealed in Git)
+  - `homelab-platform/wedding-site-api-token` (bearer token for the
+    read-only RSVPs CSV API; consumed by the wedding planner via Excel
+    Power Query — only needed for rotation or master-key-loss recovery;
+    sealed in Git)
   - `homelab-platform/ghcr-pull-pat` (only needed for rotation when
     expiry hits — the token itself is sealed in Git)
   - `homelab-platform/argocd-wedding-site-repo-pat` (ArgoCD's clone

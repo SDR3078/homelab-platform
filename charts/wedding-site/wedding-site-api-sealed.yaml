@@ -1,0 +1,96 @@
+# wedding-site API bearer token
+#
+# Holds the token the wedding-site Next.js app reads at /api/rsvps to
+# authorize the read-only CSV export consumed by the wedding planner via
+# Excel (Power Query → Get Data from Web). One key:
+#
+#   - API_TOKEN — Bearer token presented in the `Authorization` header.
+#     Keep in password manager under
+#     'homelab-platform/wedding-site-api-token' for DR (master-key-loss
+#     recovery requires regenerating from this value, AND notifying the
+#     planner since their Excel feed will need the new token).
+#
+# Loaded into the wedding-site pod via `envFrom: secretRef: wedding-site-api`
+# with `optional: true` (helm/templates/deployment.yaml in the tenant repo).
+# Pod still starts if this secret hasn't been applied yet — endpoint
+# silently 401s in that window. Safe-by-default.
+#
+# Rotation is independent of `wedding-site-app` (the AUTH_SECRET store):
+# different blast radius — AUTH_SECRET rotation invalidates all guest
+# sessions; this token rotation only invalidates the planner's Excel feed.
+# Reseal this file alone when rotating; do NOT touch wedding-site-app.
+#
+# ────────────────────────────────────────────────────────────────────────
+# OPERATIONS RUNBOOK — generating + sealing this secret from scratch
+# ────────────────────────────────────────────────────────────────────────
+# Easiest: re-run the helper at /tmp/seal-wedding-site-api.sh. The script
+# does steps 1–4 below in one go (generate → display → kubeseal → concat
+# header + body into this file). If the script isn't around, recreate it
+# from the runbook below or from the original commit.
+#
+# Manual:
+#
+# 1. Generate API_TOKEN locally (32 bytes base64):
+#
+#      API_TOKEN="$(openssl rand -base64 32)"
+#      echo "$API_TOKEN"   # save to password manager as
+#                          # 'homelab-platform/wedding-site-api-token'
+#                          # AND share with the wedding planner
+#
+# 2. Build the plaintext Secret manifest (NOT committed):
+#
+#      kubectl create secret generic wedding-site-api \
+#        --namespace wedding \
+#        --from-literal=API_TOKEN="${API_TOKEN}" \
+#        --dry-run=client -o yaml > /tmp/wedding-site-api.yaml
+#
+# 3. Encrypt with kubeseal — output to a temp file (NOT `-w` against this
+#    file, which would obliterate this header):
+#
+#      kubeseal -f /tmp/wedding-site-api.yaml \
+#        --controller-name=sealed-secrets-controller \
+#        --controller-namespace=sealed-secrets \
+#        -o yaml > /tmp/wedding-site-api-sealed-body.yaml
+#
+# 4. Concatenate this header (everything from `# wedding-site API ...`
+#    down to and including the closing `────` line) with the sealed body
+#    and write back:
+#
+#      cat /tmp/header.yaml /tmp/wedding-site-api-sealed-body.yaml \
+#        > charts/wedding-site/wedding-site-api-sealed.yaml
+#
+# 5. Shred plaintext + commit + push:
+#
+#      shred -u /tmp/wedding-site-api.yaml /tmp/wedding-site-api-sealed-body.yaml
+#      git add charts/wedding-site/wedding-site-api-sealed.yaml
+#      git commit -m "reseal wedding-site-api"
+#      git push
+#
+# 6. Roll the wedding-site pod (Reloader not installed yet — envFrom
+#    doesn't auto-pick-up a Secret change without it):
+#
+#      kubectl rollout restart deployment wedding-site -n wedding
+#
+# Rotation: repeat steps 1–6 with a new token. **Notify the wedding
+# planner** — their Excel Power Query bearer header has to be updated
+# manually (the new token won't propagate to them).
+#
+# When Stakater Reloader lands, drop step 6 and add the annotation
+#   secret.reloader.stakater.com/reload: "wedding-site-app,wedding-site-api"
+# to the wedding-site Deployment in the tenant repo's
+# helm/templates/deployment.yaml. Then any reseal here auto-rolls the pod.
+# ────────────────────────────────────────────────────────────────────────
+
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: wedding-site-api
+  namespace: wedding
+spec:
+  encryptedData:
+    API_TOKEN: AgAdr4tcD/mhjX59nBhNFbqZ+9Ct8XgPyPli2gU5K0qs9E4uXBfautOpaOdo/t281Ixo1qZODv38U2i/LFvp4v+NARtZlG3J0g3DwHja/UK7Xvj60nlFks+DEwGnrtDdrbUx7x1Ip5wBocAkCFSlUdQ+MdioQKhphqKLrXBZpocvVjZu4sjV6xewb0iVeoZXbC4e380f4lHeBrlujdSzwTU3lF+kxZkB+DAYSWdLHiRahzz7si6RqvgQe16QHp6zpbYpqHMo6wY3pOTTxLr709weCpZz9VQjyBuvdtw29URCxbHzdq12JhiIcYC9G2NHqAzpyfQEut5FDCVCzKDyH5LcGigXHz7KViwpqOnP9yVJTXR3Vqraf3Vdq35Uvs/0rDpoYuaDmOQqCS3eOVSaeQDdnp0GQZGsaiAc3ZLZE2i82h7bNPsUyQ5w23tpPZl/N123ZZy3yEA2jJWk9hHeD4kXRAmLGWqgTEnjFeZ88pfLU9N/horj2ZVMLMorMBJrZrQem6PuACxMTKgw7f7RGyI5bI0v2kEFgmlPamCo/mQMsbRDZnZPQdiHBs/uQQGdBo5zsTNAHURd1deLWzYVMU2o01/gQIVzq+mBimHEz/yxgcrRH9HMLatSEPmLW5QNMqYoQ9S5/zNQYUpfym18I8frTh1LPZOjYvIDh1RHEe/qBqm8grrStvjvyyLNEZ0zJ7b39nSFQ7ceDaVPdZaVXlRXHe4piTVC3WZEGm/QAeD4zYjvD/f5nd/dJX9kKw==
+  template:
+    metadata:
+      name: wedding-site-api
+      namespace: wedding
