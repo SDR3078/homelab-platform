@@ -90,7 +90,10 @@ Within 5-10 minutes ArgoCD will:
   restored master key (postgres role passwords, MinIO root creds,
   Cloudflare API token, postgres-backup-credentials — all materialize
   automatically with no manual step)
-- cert-manager, ingress-nginx, reflector come up
+- cert-manager, ingress-nginx, reflector, reloader come up
+  (reloader rolls workloads on Secret/ConfigMap change — tenant
+  Deployments opt in via `secret.reloader.stakater.com/reload`
+  annotation; see `apps/reloader.yaml` for the full pattern)
 - CNPG operator + MinIO operator install
 - data-platform Application syncs:
   - Postgres Cluster (postgres-data-platform) + Databases for first-party
