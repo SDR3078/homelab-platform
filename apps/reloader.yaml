@@ -1,0 +1,65 @@
+# reloader (Stakater)
+#
+# Watches Secrets/ConfigMaps and rolls workloads that reference them
+# whenever the underlying data changes. Closes the ergonomic gap where
+# `envFrom: secretRef:` (and other Secret-by-reference mounts) don't
+# auto-rollout when the Secret changes — the pod spec hasn't changed,
+# so the Deployment controller has nothing to react to.
+#
+# Opt-in via annotation on the WORKLOAD (Deployment/StatefulSet/etc).
+# Pattern we use here:
+#
+#   metadata:
+#     annotations:
+#       secret.reloader.stakater.com/reload: "wedding-credentials,wedding-site-app"
+#
+# Restarts the workload whenever any of the named Secrets in the same
+# namespace changes. Comma-separated. The corresponding
+# `configmap.reloader.stakater.com/reload: "..."` form works the same
+# way for ConfigMaps. There is also a `reloader.stakater.com/auto: "true"`
+# mode that auto-detects every Secret/ConfigMap a workload references —
+# less predictable, prefer the explicit-list form.
+#
+# Why not the Helm `checksum/config` annotation pattern?
+#   That pattern works cleanly when the SealedSecret + the Deployment
+#   live in the same Helm chart (pod template can `sha256sum` the secret
+#   manifest at render time). Wedding-site's SealedSecret lives in
+#   homelab-platform but its Deployment template lives in the wedding-site
+#   app repo — there's no in-chart artifact to checksum across that split.
+#   Reloader bridges the cross-repo gap. For first-party platform services
+#   whose chart owns both pieces (e.g., future MLflow), the checksum
+#   pattern is the more idiomatic choice.
+#
+# Restart strategy: chart default `env-vars` (writes a Reloader-managed
+# env var into the workload). Triggers a normal rolling restart via the
+# Deployment controller; no special permissions beyond watching the
+# referenced Secrets/ConfigMaps.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: reloader
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://stakater.github.io/stakater-charts
+    chart: reloader
+    targetRevision: 2.2.11
+    helm:
+      releaseName: reloader
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: reloader
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
