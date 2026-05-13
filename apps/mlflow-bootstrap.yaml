@@ -1,0 +1,63 @@
+# mlflow bootstrap — namespace + sealed S3 credentials
+#
+# In-repo glue layered under the mlflow Helm Application (apps/mlflow.yaml).
+# This Application owns the cluster-side resources the chart depends on
+# but the chart itself does not declare:
+#   - Namespace 'mlflow' (declared in Git, not via CreateNamespace=true,
+#     so PSA labels and metadata are first-class)
+#   - SealedSecret 'mlflow-s3-credentials' (MinIO svcacct keys for the
+#     mlflow-artifacts bucket, consumed by the chart's
+#     artifactRoot.s3.existingSecret reference)
+#
+# The OTHER Secret the chart consumes — 'mlflow-credentials' (DB role
+# user/password) — is NOT owned here. It lives sealed in data-platform/
+# and is mirrored into the mlflow namespace by reflector annotations on
+# charts/data-platform/mlflow-credentials-sealed.yaml's template.metadata
+# (same pattern as wedding-credentials reflected into the wedding ns
+# from application-data in session 5).
+#
+# Sync-wave 0 — runs before apps/mlflow.yaml (wave 1). The chart's
+# Deployment references both Secrets via existingSecret + envFrom, so
+# they must materialize first. The Bitnami sealed-secrets controller
+# decrypts the SealedSecret on its first reconcile; reflector mirrors
+# the data-platform-owned mlflow-credentials in parallel. By the time
+# wave 1 starts applying the chart, both Secrets exist in the namespace.
+#
+# Naming: '-bootstrap' rather than '-config'. '-config' in this repo
+# means "config for an upstream-Helm-installed operator"
+# (cert-manager-config, argocd-config). MLflow has no operator
+# dependency. '-bootstrap' matches the wedding-site-bootstrap precedent.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mlflow-bootstrap
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/SDR3078/homelab-platform.git
+    targetRevision: main
+    path: charts/mlflow
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: mlflow
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

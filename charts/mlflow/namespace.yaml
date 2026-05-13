@@ -1,0 +1,61 @@
+# mlflow namespace — ML experiment tracking + model registry
+#
+# Houses the MLflow tracking server deployed via community-charts/mlflow
+# (see apps/mlflow.yaml). Platform-side glue (this Namespace, the sealed
+# S3 credentials in this directory) is applied by apps/mlflow-bootstrap.yaml
+# at sync-wave 0; the Helm chart Application runs at wave 1.
+#
+# Cross-namespace dependencies:
+#   - postgres-data-platform-rw.data-platform.svc.cluster.local:5432
+#       MLflow's backend store (database 'mlflow', role 'mlflow').
+#       Credentials live as Secret 'mlflow-credentials' in data-platform,
+#       reflected into this namespace by the reflector annotations on
+#       charts/data-platform/mlflow-credentials-sealed.yaml.
+#   - minio.data-platform.svc.cluster.local (HTTPS, cluster-CA-signed)
+#       Artifact store, bucket 's3://mlflow-artifacts'. Auth via
+#       mlflow-s3-credentials (this directory) — a MinIO service account
+#       scoped to the mlflow-artifacts bucket only via the policy
+#       committed at bootstrap/mlflow-artifacts-policy.json. The CA for
+#       TLS verification is mounted in the pod from the auto-injected
+#       'kube-root-ca.crt' ConfigMap (present in every namespace).
+#
+# Pod Security Admission: 'restricted' is enforced. The chart's default
+# container securityContext sets runAsNonRoot, drops ALL capabilities,
+# disables allowPrivilegeEscalation, and runs as uid 1001 — fully
+# restricted-compliant. The only missing bit (seccompProfile=RuntimeDefault)
+# is supplied via values.yaml overrides in apps/mlflow.yaml.
+#
+# ────────────────────────────────────────────────────────────────────────
+# Database provisioning — fully declarative
+# ────────────────────────────────────────────────────────────────────────
+# Database + role declared in charts/data-platform/postgres-cluster.yaml:
+#   - managed.roles entry: mlflow
+#   - Database CRD:        mlflow (owner: mlflow)
+# The role's password is sealed at
+# charts/data-platform/mlflow-credentials-sealed.yaml; reflector
+# annotations on its template.metadata mirror the unsealed Secret into
+# this namespace as 'mlflow-credentials'. No imperative step on rebuild.
+#
+# ────────────────────────────────────────────────────────────────────────
+# MinIO svcacct provisioning — imperative one-time
+# ────────────────────────────────────────────────────────────────────────
+# MinIO IAM has no CRD coverage. Service accounts must be created via
+# `mc admin user svcacct add` against the live Tenant. Procedure:
+# /tmp/setup-mlflow-s3-svcacct.sh (regenerated as needed; same shape as
+# the postgres-backup-svcacct flow in rebuild.md Step 7). Resulting
+# access key + secret are sealed into mlflow-s3-credentials-sealed.yaml.
+# The policy JSON is committed at bootstrap/mlflow-artifacts-policy.json.
+# ────────────────────────────────────────────────────────────────────────
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mlflow
+  labels:
+    app.kubernetes.io/name: mlflow
+    app.kubernetes.io/part-of: homelab-platform
+    app.kubernetes.io/managed-by: argocd
+
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
