@@ -98,7 +98,15 @@ spec:
         # postgres.user/password unset.
         backendStore:
           databaseMigration: true        # initContainer runs migrations.py on first start (idempotent)
-          databaseConnectionCheck: true  # initContainer waits for the DB
+          # databaseConnectionCheck disabled — the chart's `dbchecker`
+          # initContainer template (community-charts/mlflow 1.8.1) does
+          # not apply the `securityContext` values block, so PSA restricted
+          # rejects the pod. The role this initContainer plays (wait for
+          # DB to be reachable) is already covered by the migration
+          # initContainer, which uses SQLAlchemy's create_..._with_retry()
+          # internally. If/when the chart fixes the gap upstream, this
+          # can flip back to true.
+          databaseConnectionCheck: false
           postgres:
             enabled: true
             host: postgres-data-platform-rw.data-platform.svc.cluster.local
