@@ -336,21 +336,32 @@ spec:
         # then poll forever. With useHelmHooks=false the Job is a regular
         # K8s resource that ArgoCD applies in the normal sync phase.
         #
-        # The Job's resync loop (ArgoCD repeatedly trying to patch it and
-        # hitting "spec.selector / spec.template field is immutable") is
-        # solved at the Application level via spec.ignoreDifferences below,
-        # NOT via the Replace=true sync-option annotation. Replace=true is
-        # racy: between ttlSecondsAfterFinished deleting the completed Job
-        # and ArgoCD's next reconcile the Job state flips, and Replace=true
-        # only fires when ArgoCD detects a diff — it doesn't suppress the
-        # diff itself. ignoreDifferences makes ArgoCD never see a diff on
-        # the auto-populated selector + the post-creation pod template, so
-        # the Job stays Synced indefinitely and only re-applies when the
-        # chart-rendered Job spec genuinely changes (e.g. chart upgrade
-        # changing the image tag or args).
+        # ttlSecondsAfterFinished: null — DISABLE the chart default of 300s.
+        # ROOT CAUSE of the recreation loop (3rd diagnostic pass, 2026-05-13):
+        # The Job's resync loop was NOT a diff/patch problem (which is what
+        # `ignoreDifferences` below addresses). It was a recreation problem:
+        # chart default `ttlSecondsAfterFinished: 300` made K8s GC the
+        # completed Job 5 minutes after success. ArgoCD's source manifest
+        # still says the Job should exist; on the next reconcile (~3-5min
+        # cadence) the live state is `nil`, so ArgoCD recreates the Job
+        # from the rendered manifest — and the cycle repeats indefinitely.
+        # The controller log proves it: `Tasks (dry-run): [Sync/0 resource
+        # batch/Job:airflow/airflow-run-airflow-migrations nil->obj]`.
+        # Disabling the TTL (chart template skips rendering the field when
+        # the value is nil) keeps the completed Job permanently in the
+        # namespace. ArgoCD then sees obj->obj on every reconcile and the
+        # ignoreDifferences block below handles the auto-populated
+        # selector/template fields. The Job only re-applies when the
+        # rendered spec genuinely changes (chart upgrade, image tag bump),
+        # which is the correct semantics: `airflow db migrate` is idempotent
+        # so re-running on a real chart change is safe.
+        # Storage cost: one completed Job object + one terminated pod (~few
+        # KiB of etcd) — trivial vs. spawning a fresh apache/airflow:3.2.0
+        # container every 5 minutes (~22% node CPU spike per cycle).
         migrateDatabaseJob:
           enabled: true
           useHelmHooks: false
+          ttlSecondsAfterFinished: ~
 
         # createUserJob: DISABLED. The chart's args template hardcodes
         # the admin password as a plaintext value (`-p {{ .password }}`)
@@ -396,15 +407,17 @@ spec:
 
   # ignoreDifferences — suppress ArgoCD drift detection on the
   # auto-populated fields of the migration Job. K8s populates
-  # spec.selector and propagates a controller-uid label into
-  # spec.template.metadata.labels on Job creation; the chart-rendered
-  # Job spec has neither. Without this suppression, every reconcile
-  # ArgoCD detects a "missing field" diff on the in-cluster Job, tries
-  # to patch it, and fails on "field is immutable". With these paths
-  # ignored, the Job stays Synced after its first successful creation
-  # and only re-applies when the rendered Job spec itself changes
-  # (chart upgrade, image tag change). `airflow db migrate` is
-  # idempotent so re-running on a real chart change is safe.
+  # spec.selector.matchLabels.{batch.kubernetes.io/controller-uid}
+  # and propagates the same label into spec.template.metadata.labels
+  # on Job creation; the chart-rendered manifest has neither. Without
+  # suppression, every reconcile ArgoCD detects a "missing field" diff
+  # and tries to patch the Job, hitting "spec.selector / spec.template
+  # field is immutable". With migrateDatabaseJob.ttlSecondsAfterFinished
+  # disabled above the Job persists indefinitely, and these jsonPointer
+  # paths suppress the diff on the K8s-populated fields so ArgoCD treats
+  # the Job as Synced forever — until the rendered manifest genuinely
+  # changes (chart upgrade, image tag bump), at which point ArgoCD
+  # cleanly re-applies and `airflow db migrate` runs idempotently.
   ignoreDifferences:
     - group: batch
       kind: Job
