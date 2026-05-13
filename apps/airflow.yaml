@@ -1,0 +1,243 @@
+# airflow — data + ML pipeline orchestrator (Apache Airflow 3.2.0)
+#
+# Deploys apache-airflow/airflow (official Helm chart 1.21.0, app v3.2.0)
+# as the platform's pipeline orchestrator. Targets postgres-data-platform's
+# 'airflow' logical database for the metadata store. KubernetesExecutor
+# means each task = a fresh K8s Pod (no Celery, no Redis).
+#
+# Credentials are resolved entirely via existingSecret patterns — no
+# passwords appear in this Application's values. All four chart-side
+# Secrets materialize in the airflow namespace through
+# apps/airflow-bootstrap.yaml (wave 0):
+#   - airflow-metadata-connection   (data.metadataSecretName)
+#   - airflow-fernet-key             (fernetKeySecretName)
+#   - airflow-api-secret             (apiSecretKeySecretName)
+#   - airflow-jwt-secret             (jwtSecretName)
+#
+# Database credential is owned by CNPG via managed.roles in
+# charts/data-platform/postgres-cluster.yaml (sealed at
+# charts/data-platform/airflow-credentials-sealed.yaml). The metadata
+# connection URL bakes the same password in.
+#
+# Sync-wave 1 — runs after apps/airflow-bootstrap.yaml (wave 0). The
+# chart's pods reference all four Secrets via secretKeyRef, so they must
+# materialize first. On clean rebuild a brief CreateContainerConfigError
+# on the first pod schedule is expected and self-heals once the sealed
+# secrets decrypt.
+#
+# ────────────────────────────────────────────────────────────────────────
+# Architecture choices
+# ────────────────────────────────────────────────────────────────────────
+# - Executor: KubernetesExecutor. Each task run = new K8s Pod created
+#   by the scheduler. No Celery worker pool, no Redis broker. Matches
+#   the platform's K8s-native posture.
+# - Components: apiServer (Airflow 3.x's combined UI + API; replaces
+#   the legacy 'webserver'), scheduler, triggerer (deferred-task
+#   handling), dagProcessor (DAG parsing — split from scheduler in 3.x).
+#   Disabled: webserver (2.x legacy), flower (Celery dashboard), statsd
+#   (metrics — adds at session 9 with kube-prometheus-stack), pgbouncer
+#   (connection pooler — overkill at homelab scale), redis (Celery broker).
+# - DAG source: NONE for initial install. The chart accepts an empty DAGs
+#   folder. A git-sync sidecar (dags.gitSync) gets enabled when there are
+#   actual pipelines worth running — likely alongside Lakekeeper + Iceberg.
+# - Admin user: created IMPERATIVELY after the chart is up via
+#   `kubectl exec airflow-scheduler-* -- airflow users create`. The
+#   chart's createUserJob is disabled because its args template hardcodes
+#   the password as a plaintext value (no envFrom support). See
+#   /tmp/setup-airflow-admin.sh (next setup script).
+# - Bundled subcharts disabled: postgresql, redis. External Postgres is
+#   our authoritative metadata store; Redis is a Celery dependency we
+#   don't need under KubernetesExecutor.
+# - PSA restricted: chart's component defaults are restricted-compliant
+#   out of the box (non-root, dropped capabilities, no privilege
+#   escalation, RuntimeDefault seccomp on the components we run).
+#
+# Bootstrap procedure (from-scratch deploy of this app onto the platform):
+# see docs/rebuild.md airflow section (added in the commit that adds this
+# Application).
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: airflow
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://airflow.apache.org
+    chart: airflow
+    targetRevision: 1.21.0
+    helm:
+      releaseName: airflow
+      values: |
+        # Airflow image + version. Pinned to the chart's matching appVersion
+        # so the bundled Bash/CLI helpers + the actual airflow binary stay
+        # in lockstep. Bump together with chart targetRevision.
+        airflowVersion: "3.2.0"
+        defaultAirflowTag: "3.2.0"
+
+        # KubernetesExecutor: each task run = new K8s Pod (no Celery worker
+        # pool, no Redis). Scheduler's RBAC handles the create/delete of
+        # task pods in the airflow namespace; chart's rbac.create:true
+        # (default) sets up the Role + RoleBinding.
+        executor: "KubernetesExecutor"
+
+        # External Postgres — disable the chart's bundled postgresql subchart.
+        # Our metadata DB is postgres-data-platform/airflow (CNPG-managed).
+        # The chart reads the connection URL from the sealed Secret below.
+        postgresql:
+          enabled: false
+
+        # Redis only matters for CeleryExecutor; not needed here.
+        redis:
+          enabled: false
+
+        # Database connection — chart reads the full SQLAlchemy URL from
+        # the 'connection' key of this Secret (sealed in charts/airflow/).
+        # When metadataSecretName is set, the inline data.metadataConnection
+        # values are ignored.
+        data:
+          metadataSecretName: airflow-metadata-connection
+
+        # Secret references for the cryptographic keys. Each Secret name
+        # below maps to a fixed key the chart expects:
+        #   fernetKeySecretName     -> key 'fernet-key'
+        #   apiSecretKeySecretName  -> key 'api-secret-key'
+        #   jwtSecretName           -> key 'jwt-secret'
+        fernetKeySecretName: airflow-fernet-key
+        apiSecretKeySecretName: airflow-api-secret
+        jwtSecretName: airflow-jwt-secret
+
+        # ──────────── Components ────────────────────────────────────────
+        # apiServer (Airflow 3.x): unified UI + REST API. Replaces the
+        # legacy 'webserver' component from 2.x.
+        apiServer:
+          enabled: true
+          replicas: 1
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+
+        # webserver (Airflow 2.x legacy): explicitly disabled — apiServer
+        # serves the UI in 3.x.
+        webserver:
+          enabled: false
+
+        # scheduler: the brain. Reads DAGs, decides what to run, spawns
+        # task pods via KubernetesExecutor.
+        scheduler:
+          replicas: 1
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+
+        # triggerer: handles deferred (async) tasks. Modern Airflow expects
+        # this present; small footprint, low cost to keep on.
+        triggerer:
+          enabled: true
+          replicas: 1
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+
+        # dagProcessor (Airflow 3.x): DAG parsing split from scheduler.
+        # Recommended for 3.x deployments.
+        dagProcessor:
+          enabled: true
+          replicas: 1
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+
+        # Components disabled — none of these earn their keep at this
+        # scale right now:
+        flower:
+          enabled: false       # Celery dashboard — irrelevant under K8sExecutor
+        statsd:
+          enabled: false       # Metrics aggregator — enable at session 9 (kube-prometheus-stack)
+        pgbouncer:
+          enabled: false       # Connection pooler — single-instance Postgres doesn't need it
+
+        # ──────────── DAG source ────────────────────────────────────────
+        # No DAGs at install time. The chart boots with an empty DAGs
+        # folder and the UI shows no pipelines. Re-enable gitSync when
+        # there's a DAG repo worth syncing (likely once Lakekeeper +
+        # Iceberg land and the first concrete pipeline appears).
+        dags:
+          persistence:
+            enabled: false
+          gitSync:
+            enabled: false
+
+        # ──────────── Lifecycle jobs ────────────────────────────────────
+        # migrateDatabaseJob: runs `airflow db upgrade` on chart install
+        # and every chart upgrade. Creates the schema on the empty
+        # 'airflow' database the first time through; subsequent upgrades
+        # apply alembic migrations.
+        migrateDatabaseJob:
+          enabled: true
+
+        # createUserJob: DISABLED. The chart's args template hardcodes
+        # the admin password as a plaintext value (`-p {{ .password }}`)
+        # with no envFrom path — meaning the password would need to live
+        # in this values block in plaintext. Instead we create the admin
+        # user imperatively via `kubectl exec airflow-scheduler-* --
+        # airflow users create -p $PASSWORD` after the chart is up. See
+        # the to-be-written /tmp/setup-airflow-admin.sh (mirrors the
+        # MinIO svcacct pattern).
+        createUserJob:
+          enabled: false
+
+        # cleanup: Airflow's own housekeeping CronJob. Trims expired runs,
+        # task instances, logs. Cheap to keep on.
+        cleanup:
+          enabled: true
+
+        # ──────────── Ingress ────────────────────────────────────────────
+        # apiServer ingress serves both UI + API at airflow.lab.batzbak.top.
+        # TLS via the reflected wildcard-lab-tls Secret (mirrored into
+        # this namespace by reflector annotations on
+        # charts/cert-manager/certificate-wildcard.yaml).
+        ingress:
+          apiServer:
+            enabled: true
+            ingressClassName: nginx
+            hosts:
+              - name: airflow.lab.batzbak.top
+                tls:
+                  enabled: true
+                  secretName: wildcard-lab-tls
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: airflow
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
