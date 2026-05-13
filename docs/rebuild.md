@@ -12,7 +12,7 @@ You will need:
 - The sealed-secrets master-key backup file (`sealed-secrets-master-key-BACKUP.yaml`).
   IRREPLACEABLE — kept outside Git. If lost, see [Lost master key](#lost-master-key).
 - Password manager entries for:
-  - `homelab-platform/postgres-{mlflow,dagster,lakekeeper}`
+  - `homelab-platform/postgres-{mlflow,airflow,lakekeeper}`
   - `homelab-platform/minio-root`
   - `homelab-platform/postgres-backup-svcacct`
   - `homelab-platform/cloudflare-api-token` (only needed for rotation or
@@ -29,6 +29,12 @@ You will need:
   - `homelab-platform/argocd-wedding-site-repo-pat` (ArgoCD's clone
     credential for the private wedding-site repo; only needed for
     rotation — the token itself is sealed in Git)
+  - `homelab-platform/minio-mlflow-artifacts-svcacct` (MinIO svcacct
+    keys scoped to the mlflow-artifacts bucket; only needed for
+    rotation or master-key-loss recovery — sealed in Git)
+  - `homelab-platform/airflow-admin` (Airflow web UI admin password;
+    used by `/tmp/setup-airflow-admin.sh` after every rebuild because
+    the ab_user table is recreated empty)
 - DNS for `*.lab.batzbak.top` (or your domain) resolvable from clients
 - Devbox with `kubectl`, `helm`, `argocd`, `kubeseal`, `mc` CLIs
 
@@ -104,6 +110,13 @@ Within 5-10 minutes ArgoCD will:
   - Postgres Cluster (postgres-tenants) + Databases for tenant apps
     (wedding, etc.)
   - Per-tenant role credentials reflected into each tenant's namespace
+- Platform service Applications sync:
+  - mlflow-bootstrap (wave 0) + mlflow (wave 1) — mlflow tracking
+    server + model registry (artifact write fails until Step 7b)
+  - airflow-bootstrap (wave 0) + airflow (wave 1) — Airflow 3.x
+    orchestrator (api-server + scheduler + triggerer + dagProcessor +
+    cleanup CronJob). Migration Job runs automatically and populates
+    the schema; admin user creation is the manual Step 10.
 
 Expected transient state: Postgres backups will FAIL in this window
 because `postgres-backup-credentials` authenticates against an svcacct
@@ -255,7 +268,47 @@ diff /tmp/refreshed-backup.yaml /path/to/sealed-secrets-master-key-BACKUP.yaml
 
 Should be identical apart from `generation` / `resourceVersion` fields.
 
-### 10. Tenant apps
+### 10. Airflow admin user creation
+
+The Airflow chart's `createUserJob` is disabled in `apps/airflow.yaml`
+because its args template hardcodes the admin password as a plaintext
+value in the Job's args — no envFrom or secretKeyRef path. Instead the
+admin user is created imperatively after the chart's pods are Ready
+and the migration Job has populated the schema.
+
+```bash
+# Run after airflow-{api-server,scheduler,dag-processor,triggerer}
+# are 1/1 or 2/2 Ready in the airflow ns.
+/tmp/setup-airflow-admin.sh
+```
+
+The script prompts for the admin password (from password manager entry
+`homelab-platform/airflow-admin`), looks up the scheduler pod, and
+runs `airflow users create -r Admin -u admin -p <password>`. The user
+is persisted in the `ab_user` table of postgres-data-platform/airflow.
+
+On master-key-loss rebuild only: ALL five Airflow secrets need to be
+regenerated FIRST via `/tmp/setup-airflow-secrets.sh`. The script
+generates fresh DB password + Fernet key + api-secret-key + jwt-secret
++ admin password in one shot and overwrites the sealed files at:
+- `charts/data-platform/airflow-credentials-sealed.yaml`
+- `charts/airflow/airflow-metadata-connection-sealed.yaml`
+- `charts/airflow/airflow-fernet-key-sealed.yaml`
+- `charts/airflow/airflow-api-secret-sealed.yaml`
+- `charts/airflow/airflow-jwt-secret-sealed.yaml`
+
+DB password + admin password both go to the password manager
+(`homelab-platform/postgres-airflow`, `homelab-platform/airflow-admin`).
+**Fernet-key rotation requires re-encrypting all stored Connections** —
+don't run this script for rotation purposes unless you mean to wipe
+Connection records. Targeted single-secret resealing is the correct
+rotation path; the all-in-one script is bootstrap/disaster-recovery only.
+
+After the sealed files are re-committed and ArgoCD applies them, run
+`/tmp/setup-airflow-admin.sh` to recreate the admin user (the ab_user
+table is empty on a fresh airflow database).
+
+### 11. Tenant apps
 
 The platform hosts tenant apps whose chart lives in a separate repository.
 Each tenant app gets two ArgoCD Applications:
@@ -266,7 +319,7 @@ Each tenant app gets two ArgoCD Applications:
 Currently deployed tenant apps:
 - `wedding-site` (https://github.com/SDR3078/wedding-site)
 
-Per-tenant rebuild shape (after Step 9 finishes):
+Per-tenant rebuild shape (after Step 10 finishes):
 
 1. **Database tier comes up automatically.** The application-data
    Application materializes `postgres-tenants` with all per-tenant roles

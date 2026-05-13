@@ -23,7 +23,7 @@
 # self-heals as soon as the wave-0 Application finishes decrypting.
 #
 # Bootstrap procedure (from-scratch deploy of this app onto the
-# platform): see docs/rebuild.md Step 10, which delegates to
+# platform): see docs/rebuild.md Step 11, which delegates to
 # charts/wedding-site/namespace.yaml's database-provisioning runbook
 # and the runbooks on each *-sealed.yaml.
 # Tenant-side generic deploy guide:

@@ -34,15 +34,18 @@ Full from-scratch rebuild runbook: [`docs/rebuild.md`](docs/rebuild.md).
 
 To be populated as sessions progress:
 - [x] k3s cluster bootstrapped
-- [x] ArgoCD + sealed-secrets (session 1 completion)
+- [x] ArgoCD + sealed-secrets (session 1)
 - [x] ingress-nginx + cert-manager (session 2)
 - [x] CloudNativePG + MinIO (session 3)
-- [ ] MLflow (session 4)
-- [ ] Dagster (session 5)
-- [ ] Lakekeeper + first pipeline (session 6)
-- [ ] Full medallion + model registry (session 7)
-- [ ] Data quality + scheduling (session 8)
-- [ ] kube-prometheus-stack (session 9)
-- [ ] Pipeline & model observability (session 10)
-- [ ] LiteLLM + Langfuse + pgvector (session 11)
-- [ ] Portfolio chatbot as cluster app (session 12)
+- [x] Tenant data tier (postgres-tenants) + wedding-site migration (session 5)
+- [x] Stakater Reloader for cross-repo Secret rollouts (session 6)
+- [x] MLflow (session 7)
+- [x] Airflow (session 8) — Dagster originally planned, switched after a
+      cross-orchestrator comparison; see session-2026-05-13.md
+- [ ] Lakekeeper + first pipeline (next)
+- [ ] Full medallion + model registry
+- [ ] Data quality + scheduling
+- [ ] kube-prometheus-stack
+- [ ] Pipeline & model observability
+- [ ] LiteLLM + Langfuse + pgvector
+- [ ] Portfolio chatbot as cluster app
