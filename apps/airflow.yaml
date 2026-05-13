@@ -81,6 +81,15 @@ spec:
         airflowVersion: "3.2.0"
         defaultAirflowTag: "3.2.0"
 
+        # Chart-wide revisionHistoryLimit. Applies to every Deployment +
+        # StatefulSet the chart renders unless a component overrides it.
+        # Same rationale as wedding-site (session 5): rollback in this repo
+        # is Git-driven (revert the commit + push), so in-cluster history
+        # is not load-bearing; 3 is plenty of emergency-rollback headroom
+        # without the long zero-replica RS tail accumulating with each
+        # values change.
+        revisionHistoryLimit: 3
+
         # KubernetesExecutor: each task run = new K8s Pod (no Celery worker
         # pool, no Redis). Scheduler's RBAC handles the create/delete of
         # task pods in the airflow namespace; chart's rbac.create:true
@@ -269,6 +278,16 @@ spec:
         migrateDatabaseJob:
           enabled: true
           useHelmHooks: false
+          # Replace=true tells ArgoCD to delete + create the Job on every
+          # sync that requires a spec change, rather than patching in
+          # place. Job.spec.template is immutable after creation — any
+          # chart values change that affects the pod template (env vars,
+          # securityContexts, image tag) would otherwise fail with
+          # "field is immutable" until the Job is manually deleted.
+          # `airflow db migrate` is idempotent, so re-running it on every
+          # spec change is safe.
+          jobAnnotations:
+            argocd.argoproj.io/sync-options: Replace=true
 
         # createUserJob: DISABLED. The chart's args template hardcodes
         # the admin password as a plaintext value (`-p {{ .password }}`)
