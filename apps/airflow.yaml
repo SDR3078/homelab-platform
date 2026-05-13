@@ -113,6 +113,28 @@ spec:
             seccompProfile:
               type: RuntimeDefault
 
+        # Polling intervals — relax from chart defaults to lower idle CPU.
+        # Airflow at default settings has the scheduler heartbeat the DB
+        # every 5s, the DAG processor re-parse the DAGs folder every 30s,
+        # and the triggerer heartbeat every 5s. With ZERO DAGs and at
+        # homelab scale, that's ~340m CPU continuously across the four
+        # components — a meaningful chunk of a single-node 4-core VM.
+        #
+        # Relaxing to 30s heartbeat + 5min DAG parse cuts CPU to ~50-80m.
+        # Tradeoff: tasks pick up up to 30s slower (vs near-instant at the
+        # default). For DAGs that run hourly/daily, the latency is invisible.
+        # Bump these back down to default if real-time-scheduled pipelines
+        # land and the 30s latency starts mattering.
+        env:
+          - name: AIRFLOW__SCHEDULER__SCHEDULER_HEARTBEAT_SEC
+            value: "30"
+          - name: AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL
+            value: "300"
+          - name: AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL
+            value: "600"
+          - name: AIRFLOW__TRIGGERER__JOB_HEARTBEAT_SEC
+            value: "30"
+
         # External Postgres — disable the chart's bundled postgresql subchart.
         # Our metadata DB is postgres-data-platform/airflow (CNPG-managed).
         # The chart reads the connection URL from the sealed Secret below.
