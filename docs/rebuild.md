@@ -137,12 +137,19 @@ to flush the stale failed Backup CR) is in
 `charts/application-data/postgres-tenants-cluster.yaml`'s runbook header
 under "first-sync race with reflector".
 
-### 7. Recreate the MinIO postgres-backup service account
+### 7. Recreate MinIO service accounts for platform consumers
 
-This is a chicken-and-egg unique to MinIO: the sealed credentials in Git
-authenticate against a service account that exists only in MinIO's internal
-IAM database, not in K8s. A fresh Tenant has an empty IAM DB, so the
-svcacct must be recreated.
+This is a chicken-and-egg unique to MinIO: sealed credentials in Git
+authenticate against service accounts that exist only in MinIO's internal
+IAM database, not in K8s. A fresh Tenant has an empty IAM DB, so each
+svcacct must be recreated. Two are needed at this point:
+
+| Svcacct | Policy file | Sealed creds destination |
+|---|---|---|
+| postgres-backup | `bootstrap/postgres-backup-policy.json` | `charts/data-platform/postgres-backup-credentials-sealed.yaml` |
+| mlflow-artifacts | `bootstrap/mlflow-artifacts-policy.json` | `charts/mlflow/mlflow-s3-credentials-sealed.yaml` |
+
+#### 7a. postgres-backup svcacct
 
 Procedure: identical to credential rotation, documented inline in
 `charts/data-platform/postgres-cluster.yaml`'s "backup credential rotation"
@@ -184,6 +191,48 @@ git push
 
 ArgoCD syncs the new sealed Secret → controller decrypts → CNPG starts
 using working keys.
+
+#### 7b. mlflow-artifacts svcacct
+
+Same shape as 7a, but scripted end-to-end (mc + kubeseal in one shot)
+because the mlflow ns and SealedSecret destination are created by
+`apps/mlflow-bootstrap.yaml`, which converges to a real Secret only
+once this svcacct is materialized in MinIO and resealed.
+
+Regenerate the setup script (preserved verbatim across sessions; see
+session 6's note on the imperative-MinIO pattern):
+
+```bash
+# Run from the homelab-platform repo root. The script:
+#   1. Prompts for MinIO root password
+#   2. Port-forwards to the live MinIO API
+#   3. Creates the named policy (mlflow-artifacts-policy) from
+#      bootstrap/mlflow-artifacts-policy.json
+#   4. Creates a service account under 'admin' attached to that policy
+#   5. Seals AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY into
+#      charts/mlflow/mlflow-s3-credentials-sealed.yaml
+#   6. Prints both keys in a banner — save to password manager entry
+#      "homelab-platform/minio-mlflow-artifacts-svcacct"
+/tmp/setup-mlflow-s3-svcacct.sh
+```
+
+If `/tmp/setup-mlflow-s3-svcacct.sh` is missing, regenerate it inline —
+the policy is committed; the script content lives in this section's git
+history via the commit that introduced it. The interactive seal+commit
+flow is identical to postgres-backup-credentials above; rotation also
+re-uses this script (it overwrites the sealed file in place).
+
+After resealing, commit:
+
+```bash
+git add charts/mlflow/mlflow-s3-credentials-sealed.yaml
+git commit -m "reseal mlflow-s3-credentials for new MinIO Tenant"
+git push
+```
+
+ArgoCD syncs → controller decrypts → mlflow Deployment's
+`artifactRoot.s3.existingSecret` reference resolves and the pod boots
+its first artifact connection successfully.
 
 ### 8. Verify backups end-to-end
 

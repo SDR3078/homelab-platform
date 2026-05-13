@@ -1,0 +1,210 @@
+# mlflow — experiment tracking + model registry
+#
+# Deploys community-charts/mlflow (chart 1.8.1, MLflow app v3.7.0) as the
+# first consumer of both data-plane services:
+#   - postgres-data-platform/mlflow (backend store for runs + registry)
+#   - minio:mlflow-artifacts        (artifact store)
+#
+# Credentials are resolved entirely via existingSecret patterns — no
+# passwords appear in this Application's values. Both source Secrets
+# materialize in the mlflow namespace through apps/mlflow-bootstrap.yaml
+# (wave 0):
+#   - mlflow-credentials       (DB user/password — reflected from
+#                               data-platform via reflector annotations
+#                               on the sealed source)
+#   - mlflow-s3-credentials    (MinIO svcacct access key + secret —
+#                               sealed in charts/mlflow/)
+#
+# TLS to MinIO uses the auto-injected kube-root-ca.crt ConfigMap (the
+# k3s cluster CA that signed MinIO's auto-cert). Mounted as a single
+# file at /etc/ssl/k3s/ca.crt and pointed to via AWS_CA_BUNDLE — cleaner
+# than MLFLOW_S3_IGNORE_TLS, no Secret needed.
+#
+# Sync-wave 1 — runs after apps/mlflow-bootstrap.yaml (wave 0). The
+# wave-0 Application provides the namespace + the sealed S3 credentials;
+# reflector provides the DB credentials + wildcard TLS Secret in parallel.
+# On clean rebuild a brief CreateContainerConfigError on first pod
+# schedule is expected and self-heals once the reflected mlflow-credentials
+# arrives.
+#
+# Reloader on this Deployment: NOT wired today. The community-charts/mlflow
+# chart does not expose Deployment.metadata.annotations as a values knob,
+# so the standard secret.reloader.stakater.com/reload annotation can't be
+# added without forking the chart. On password rotation (reseal of
+# mlflow-credentials or mlflow-s3-credentials), the runbook step is:
+#   kubectl rollout restart deployment mlflow -n mlflow
+# Documented inline rather than worked around — frequency is low (rotations
+# are quarterly at most) and the manual command is unambiguous.
+#
+# Auth: DISABLED. The MLflow service is exposed at mlflow.lab.batzbak.top
+# but that hostname is currently internal-only (resolvable only on the
+# home LAN). When/if an external domain lands or the service is exposed
+# publicly via Cloudflare Tunnel, the TODO inside values below points at
+# the basic-auth opt-in (chart-native `auth.enabled: true` plus a sealed
+# admin credential pair).
+#
+# Bootstrap procedure (from-scratch deploy of this app onto the platform):
+# see docs/rebuild.md mlflow section (added in the commit that adds this
+# Application).
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mlflow
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://community-charts.github.io/helm-charts
+    chart: mlflow
+    targetRevision: 1.8.1
+    helm:
+      releaseName: mlflow
+      values: |
+        replicaCount: 1
+
+        # Pod Security Admission 'restricted' compliance. Chart defaults
+        # already cover non-root + drop-ALL + no privilege escalation;
+        # the explicit seccompProfile is the one bit PSA-restricted
+        # demands that the chart leaves unset.
+        podSecurityContext:
+          fsGroup: 1001
+          fsGroupChangePolicy: OnRootMismatch
+          seccompProfile:
+            type: RuntimeDefault
+
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+          readOnlyRootFilesystem: false  # MLflow writes to /tmp during artifact streaming
+          runAsNonRoot: true
+          runAsUser: 1001
+          runAsGroup: 1001
+          seccompProfile:
+            type: RuntimeDefault
+
+        # Backend store: postgres-data-platform/mlflow.
+        # PGUSER + PGPASSWORD are sourced from the existingDatabaseSecret
+        # (libpq convention); PGHOST/PGPORT/PGDATABASE come from values.
+        # When existingDatabaseSecret.name is set, the chart skips its
+        # internal env-secret rendering of user/password, so we leave
+        # postgres.user/password unset.
+        backendStore:
+          databaseMigration: true        # initContainer runs migrations.py on first start (idempotent)
+          databaseConnectionCheck: true  # initContainer waits for the DB
+          postgres:
+            enabled: true
+            host: postgres-data-platform-rw.data-platform.svc.cluster.local
+            port: 5432
+            database: mlflow
+            driver: ""  # SQLAlchemy default (psycopg2-binary, bundled in the mlflow image)
+          existingDatabaseSecret:
+            name: mlflow-credentials
+            usernameKey: username
+            passwordKey: password
+
+        # Artifact store: minio:mlflow-artifacts.
+        # AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY are sourced from the
+        # existingSecret. MLFLOW_S3_ENDPOINT_URL + AWS_CA_BUNDLE are
+        # provided via extraEnvVars; the CA bundle file is mounted from
+        # the kube-root-ca.crt ConfigMap (cluster-CA-signed cert chain).
+        artifactRoot:
+          proxiedArtifactStorage: false
+          s3:
+            enabled: true
+            bucket: mlflow-artifacts
+            path: ""
+            existingSecret:
+              name: mlflow-s3-credentials
+              keyOfAccessKeyId: AWS_ACCESS_KEY_ID
+              keyOfSecretAccessKey: AWS_SECRET_ACCESS_KEY
+
+        extraEnvVars:
+          MLFLOW_S3_ENDPOINT_URL: https://minio.data-platform.svc.cluster.local
+          AWS_CA_BUNDLE: /etc/ssl/k3s/ca.crt
+
+        # k3s cluster CA mounted as a single file. The ConfigMap is
+        # auto-injected by Kubernetes in every namespace; mounting it
+        # as a subPath at a custom location avoids replacing the
+        # container's existing /etc/ssl/certs directory.
+        extraVolumes:
+          - name: cluster-ca
+            configMap:
+              name: kube-root-ca.crt
+        extraVolumeMounts:
+          - name: cluster-ca
+            mountPath: /etc/ssl/k3s/ca.crt
+            subPath: ca.crt
+            readOnly: true
+
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            memory: 512Mi
+
+        service:
+          enabled: true
+          type: ClusterIP
+          port: 80
+
+        ingress:
+          enabled: true
+          className: nginx
+          hosts:
+            - host: mlflow.lab.batzbak.top
+              paths:
+                - path: /
+                  pathType: Prefix
+          tls:
+            - secretName: wildcard-lab-tls
+              hosts:
+                - mlflow.lab.batzbak.top
+
+        # TODO: enable basic auth when MLflow is exposed beyond the
+        # internal LAN. Procedure when ready:
+        #   1. Generate admin username + password, seal as
+        #      mlflow-admin-credentials in charts/mlflow/.
+        #   2. Add auth.existingAdminSecret.name: mlflow-admin-credentials
+        #      and auth.enabled: true to this block.
+        #   3. Decide on auth.postgres.enabled — if true, also seal a
+        #      separate auth DB credentials secret + add an `auth`
+        #      database to charts/data-platform/postgres-cluster.yaml.
+        # Until then, mlflow.lab.batzbak.top resolves only on the home
+        # LAN and direct internet exposure is gated by upstream networking.
+        auth:
+          enabled: false
+
+        telemetry:
+          enabled: false  # No anonymized usage data to MLflow upstream
+
+        # ServiceMonitor will be enabled in session 9 alongside the
+        # kube-prometheus-stack install. Skipped now because no Prometheus
+        # operator is present to consume it.
+        serviceMonitor:
+          enabled: false
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: mlflow
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
