@@ -1,0 +1,14 @@
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: airflow-metadata-connection
+  namespace: airflow
+spec:
+  encryptedData:
+    connection: AgAcAO3h6vWGLKnRryKy8PpJYCeZq7mE64/6Er0RJYqDLH6A4mJoiV1+Ph5IkebVGElz1W556QqHkaUvwDnrW2RlMnQPlIzvGdHaPurwmPkV0wLnuiOaNgrXZnaYKYec6SOUTYLTFpcWDfQth/5Bn9gVxAU/LYhr5MDdK5WiZ6fjaF5xTAbG+cgiP0bj351sBCx6XgF/mF7WhmmktPSl1U76uSLckx+HpT6a1h5d54cmUctXNSdgQqmxQNyQmm1qzRof9YXVIegTIO0Z5k3I4LZj2jBZv0rDGzyYsCbin95+NDQ2c2v7HzNtIJRlGAHWU3cTgKtPdgO+KAJtpka+6Jzgf6GKgJBO7NFrxxnACBFsKN4aKm85x1kCCISn51pgyBZ/iDYlGzT9Z8+OLqLDTsAbPwddN6GH8Ni63HyGXFH4X5PneY6rneZKP0wBtW1uZN2J+fPbx8ex5MDArFOHLW62cVIeZz1LFapaFx4naBALOHDNAp3fTiBr/9CDZy5GETHPOweXrU11EPHngqoPmERSaGShKw3EuYQeQ7ItOKPwl1SoGwJTWAum5zzhX+fUmi8XethUdRnyNgITlYp7RZ1TB1pj4h7fDDdQhqJo5Phni6psurmcF0lwD2PLyYJDVkZ771oJA/v82KqWPcgdsrKx4f4URahj0gwoBltjxS9jiLPLvb70PtH7QM7sx4B+Kz7oTE2tXx3q0NRrG2FdwVC8dughxvsHyRKMPJQHXYqRGXSFrrQh/FIxVkGpnON0yxUbE9zRB5TyOkM2xK30KR9nbrNyVnm+FC8CN0N5kprtMLKE1+tI4K0eVXS6d+eC3JbWoCIjk1+hkZ4XFHlRR1SxOczP2N/PdDTtHE0lGwKgw/vGnwEj
+  template:
+    metadata:
+      name: airflow-metadata-connection
+      namespace: airflow
+    type: Opaque

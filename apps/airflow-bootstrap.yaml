@@ -1,0 +1,63 @@
+# airflow bootstrap — namespace + sealed credentials/keys
+#
+# In-repo glue layered under the airflow Helm Application (apps/airflow.yaml).
+# This Application owns the cluster-side resources the chart depends on
+# but the chart itself does not declare:
+#   - Namespace 'airflow' (declared in Git, not via CreateNamespace=true,
+#     so PSA labels and metadata are first-class)
+#   - SealedSecret 'airflow-metadata-connection'  (chart's data.metadataSecretName)
+#   - SealedSecret 'airflow-fernet-key'           (chart's fernetKeySecretName)
+#   - SealedSecret 'airflow-api-secret'           (chart's apiSecretKeySecretName)
+#   - SealedSecret 'airflow-jwt-secret'           (chart's jwtSecretName)
+#
+# Database role credential ('airflow-credentials' in data-platform ns) is
+# NOT owned here — CNPG reads it from data-platform via the managed.roles
+# block in charts/data-platform/postgres-cluster.yaml. The chart consumes
+# the connection URL via airflow-metadata-connection in this ns (same
+# password embedded). One DB password, two sealed places — see the
+# rotation note in charts/airflow/namespace.yaml's header.
+#
+# Sync-wave 0 — runs before apps/airflow.yaml (wave 1). The chart's pods
+# reference all four sealed Secrets via secretKeyRef, so they must
+# materialize first. The sealed-secrets controller decrypts on first
+# reconcile; by the time wave 1 starts applying the chart, the real
+# Secrets exist in the namespace.
+#
+# Naming: '-bootstrap' matches the mlflow-bootstrap and wedding-site-bootstrap
+# precedents. '-config' in this repo means "config for an upstream-Helm-installed
+# operator" (cert-manager-config, argocd-config). Airflow has no operator
+# dependency, so '-bootstrap' is the honest label.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: airflow-bootstrap
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/SDR3078/homelab-platform.git
+    targetRevision: main
+    path: charts/airflow
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: airflow
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

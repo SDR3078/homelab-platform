@@ -1,0 +1,74 @@
+# airflow namespace — data + ML pipeline orchestrator
+#
+# Houses the Airflow 3.x stack deployed via apache-airflow/airflow Helm
+# chart (see apps/airflow.yaml). Platform-side glue (this Namespace and
+# the four sealed Secrets in this directory) is applied by
+# apps/airflow-bootstrap.yaml at sync-wave 0; the Helm chart Application
+# runs at wave 1.
+#
+# Cross-namespace dependencies:
+#   - postgres-data-platform-rw.data-platform.svc.cluster.local:5432
+#       Airflow's metadata DB (database 'airflow', role 'airflow').
+#       The role + password are declared in
+#       charts/data-platform/postgres-cluster.yaml + sealed at
+#       charts/data-platform/airflow-credentials-sealed.yaml. The chart
+#       does NOT read that Secret directly — instead it reads
+#       airflow-metadata-connection (this directory) which contains the
+#       full SQLAlchemy URL (postgresql+psycopg2://...) with the same
+#       password baked in. Rotation requires resealing BOTH files.
+#
+# Pod Security Admission: 'restricted' is enforced. Airflow 3.x's chart
+# is restricted-compliant out of the box (non-root, dropped capabilities,
+# explicit seccomp on the components we run); no values overrides needed
+# beyond the chart defaults. KubernetesExecutor's task pods inherit the
+# webserver/scheduler's security context.
+#
+# ────────────────────────────────────────────────────────────────────────
+# Database provisioning — fully declarative
+# ────────────────────────────────────────────────────────────────────────
+# Database + role declared in charts/data-platform/postgres-cluster.yaml:
+#   - managed.roles entry: airflow
+#   - Database CRD:        airflow (owner: airflow)
+# Password sealed at charts/data-platform/airflow-credentials-sealed.yaml;
+# CNPG reads it from data-platform ns directly (no reflection — the
+# chart consumes airflow-metadata-connection in THIS ns, which carries
+# the same password embedded in the SQLAlchemy URL).
+#
+# ────────────────────────────────────────────────────────────────────────
+# Initial secret generation — imperative one-time
+# ────────────────────────────────────────────────────────────────────────
+# Five secrets are required at install time. They are generated + sealed
+# together by /tmp/setup-airflow-secrets.sh:
+#   1. charts/data-platform/airflow-credentials-sealed.yaml
+#        (username/password — CNPG-shape, for managed.roles)
+#   2. charts/airflow/airflow-metadata-connection-sealed.yaml
+#        (connection — full SQLAlchemy URL — chart's data.metadataSecretName)
+#   3. charts/airflow/airflow-fernet-key-sealed.yaml
+#        (fernet-key — encrypts Airflow Connections at rest)
+#   4. charts/airflow/airflow-api-secret-sealed.yaml
+#        (api-secret-key — Flask API secret, Airflow 3.x)
+#   5. charts/airflow/airflow-jwt-secret-sealed.yaml
+#        (jwt-secret — JWT signing key for Airflow's internal API)
+# Plaintext passwords go to password manager:
+#   - homelab-platform/postgres-airflow (DB role)
+#   - homelab-platform/airflow-admin (UI login — used by a SECOND script,
+#     /tmp/setup-airflow-admin.sh, that runs AFTER the chart is up to
+#     create the admin user via `kubectl exec airflow-scheduler-* --
+#     airflow users create`).
+#
+# Fernet key rotation is painful — it requires re-encrypting all stored
+# Connections. Don't rotate carelessly.
+# ────────────────────────────────────────────────────────────────────────
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: airflow
+  labels:
+    app.kubernetes.io/name: airflow
+    app.kubernetes.io/part-of: homelab-platform
+    app.kubernetes.io/managed-by: argocd
+
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted

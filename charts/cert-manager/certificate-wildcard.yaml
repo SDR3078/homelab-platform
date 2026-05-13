@@ -28,11 +28,11 @@ spec:
       # Allow-list of namespaces (comma-separated, regex supported)
       # where copies of this Secret are permitted. Append new
       # namespaces as services come online (e.g., "argocd,data-platform").
-      reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: "argocd,data-platform,wedding,mlflow"
+      reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: "argocd,data-platform,wedding,mlflow,airflow"
       # Automatically create copies in matching namespaces below,
       # rather than waiting for on-demand mirroring requests.
       reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
-      reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "argocd,data-platform,wedding,mlflow"
+      reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "argocd,data-platform,wedding,mlflow,airflow"
   issuerRef:
     name: letsencrypt-production
     kind: ClusterIssuer

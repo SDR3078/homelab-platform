@@ -24,13 +24,13 @@
 # OPERATIONS RUNBOOK — credentials for each role
 # ────────────────────────────────────────────────────────────────────────
 # The 'managed.roles' block below references three Secrets:
-#   mlflow-credentials, dagster-credentials, lakekeeper-credentials
+#   mlflow-credentials, airflow-credentials, lakekeeper-credentials
 #
 # These Secrets must exist before CNPG can create the corresponding roles.
 # We seal them into Git as SealedSecrets. From the devbox:
 #
 #   # 1. Generate a strong password for each role
-#   for role in mlflow dagster lakekeeper; do
+#   for role in mlflow airflow lakekeeper; do
 #     pw=$(openssl rand -base64 32 | tr -d '=+/' | head -c 32)
 #
 #     # 2. Construct a regular Secret manifest (NOT committed)
@@ -216,11 +216,11 @@ spec:
         login: true
         passwordSecret:
           name: mlflow-credentials
-      - name: dagster
+      - name: airflow
         ensure: present
         login: true
         passwordSecret:
-          name: dagster-credentials
+          name: airflow-credentials
       - name: lakekeeper
         ensure: present
         login: true
@@ -247,13 +247,13 @@ spec:
 apiVersion: postgresql.cnpg.io/v1
 kind: Database
 metadata:
-  name: dagster
+  name: airflow
   namespace: data-platform
 spec:
   cluster:
     name: postgres-data-platform
-  name: dagster
-  owner: dagster
+  name: airflow
+  owner: airflow
 
 ---
 apiVersion: postgresql.cnpg.io/v1
