@@ -301,9 +301,16 @@ spec:
           enabled: false
 
         # cleanup: Airflow's own housekeeping CronJob. Trims expired runs,
-        # task instances, logs. Cheap to keep on.
+        # task instances, logs.
+        # Schedule relaxed from chart default (every 15 min) to daily —
+        # each firing spawns a fresh Python container that loads the full
+        # Airflow stack (~200-400m CPU briefly), and with zero DAGs there
+        # is essentially nothing to clean. Daily at 03:00 is more than
+        # enough for homelab-scale activity. Bump back to chart default
+        # when many DAGs are producing real cleanup workload.
         cleanup:
           enabled: true
+          schedule: "0 3 * * *"
 
         # ──────────── Ingress ────────────────────────────────────────────
         # apiServer ingress serves both UI + API at airflow.lab.batzbak.top.
