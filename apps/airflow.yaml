@@ -87,6 +87,32 @@ spec:
         # (default) sets up the Role + RoleBinding.
         executor: "KubernetesExecutor"
 
+        # Chart-wide securityContexts. The Airflow chart's component
+        # defaults are NOT PSA-restricted-compliant — they leave
+        # runAsNonRoot/seccompProfile unset on every container including
+        # the wait-for-airflow-migrations init, the *-log-groomer
+        # sidecars, and the main process containers. Setting these
+        # globally here propagates to every Deployment/StatefulSet/Job
+        # the chart renders.
+        # Airflow image's canonical user is uid 50000.
+        securityContexts:
+          pod:
+            runAsNonRoot: true
+            runAsUser: 50000
+            runAsGroup: 0
+            fsGroup: 0
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            runAsNonRoot: true
+            runAsUser: 50000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+
         # External Postgres — disable the chart's bundled postgresql subchart.
         # Our metadata DB is postgres-data-platform/airflow (CNPG-managed).
         # The chart reads the connection URL from the sealed Secret below.
