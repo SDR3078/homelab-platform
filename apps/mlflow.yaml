@@ -183,6 +183,20 @@ spec:
           type: ClusterIP
           port: 80
 
+        # Disable the chart's MLFLOW_CONFIGURE_LOGGING env + its auto-injected
+        # --gunicorn-opts='--log-level=info' arg. Reason: MLflow 3.x's security
+        # middleware (--allowed-hosts / --cors-allowed-origins, used above)
+        # only works with uvicorn (the new default in 3.x). Passing
+        # --gunicorn-opts forces gunicorn and triggers a startup error
+        # ("Security middleware parameters ... cannot be used with
+        # --gunicorn-opts"). With log.enabled: false the chart skips the
+        # --gunicorn-opts arg, MLflow runs with uvicorn, and the security
+        # middleware honors allowed-hosts. MLflow still logs to stdout at
+        # uvicorn's default level — only the chart's chart-managed log-level
+        # plumbing is what gets disabled here.
+        log:
+          enabled: false
+
         ingress:
           enabled: true
           className: nginx
