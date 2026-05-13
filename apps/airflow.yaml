@@ -159,14 +159,18 @@ spec:
 
         # scheduler: the brain. Reads DAGs, decides what to run, spawns
         # task pods via KubernetesExecutor.
+        # 1Gi limit — at idle ~350Mi resident, but `kubectl exec` of
+        # `airflow users create` (admin bootstrap) runs in this container's
+        # cgroup and pushed past 512Mi during initial install. 1Gi gives
+        # headroom for that + any future exec'd CLI operations.
         scheduler:
           replicas: 1
           resources:
             requests:
               cpu: 100m
-              memory: 256Mi
+              memory: 384Mi
             limits:
-              memory: 512Mi
+              memory: 1Gi
 
         # triggerer: handles deferred (async) tasks. Modern Airflow expects
         # this present; small footprint, low cost to keep on.
