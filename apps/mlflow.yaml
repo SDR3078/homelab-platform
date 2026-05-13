@@ -155,9 +155,28 @@ spec:
         resources:
           requests:
             cpu: 100m
-            memory: 256Mi
-          limits:
             memory: 512Mi
+          # MLflow 3.x with gunicorn (sync workers) sits around 600-700Mi
+          # at idle with 2 workers + alembic + SQLAlchemy. Initial migration
+          # spikes higher. 1Gi gives headroom; bump if alembic upgrade
+          # passes are added in future MLflow releases.
+          limits:
+            memory: 1Gi
+
+        # Reduce gunicorn workers from default 4 → 2 (each worker is
+        # ~150-200Mi resident). Single-user homelab traffic; 2 workers is
+        # plenty for the tracking-server workload.
+        extraArgs:
+          workers: "2"
+          # MLflow 3.x introduced a security middleware that restricts
+          # connections to localhost by default. The chart sets --host 0.0.0.0
+          # but doesn't configure --allowed-hosts, so kubelet probes
+          # (sourced from the pod IP, not 127.0.0.1) get rejected and
+          # the pod CrashLoopBackOffs on liveness failure. "*" is safe
+          # for internal-only deployment; tighten when an external domain
+          # lands (alongside the auth.enabled flip in the auth: block below).
+          allowedHosts: "*"
+          corsAllowedOrigins: "*"
 
         service:
           enabled: true
