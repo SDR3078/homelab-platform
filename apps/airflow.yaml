@@ -217,8 +217,14 @@ spec:
         # and every chart upgrade. Creates the schema on the empty
         # 'airflow' database the first time through; subsequent upgrades
         # apply alembic migrations.
+        # useHelmHooks=false because ArgoCD's translation of Helm hooks
+        # (post-install/post-upgrade) drops this Job from the sync
+        # manifest entirely — wait-for-airflow-migrations init containers
+        # then poll forever. With useHelmHooks=false the Job is a regular
+        # K8s resource that ArgoCD applies in the normal sync phase.
         migrateDatabaseJob:
           enabled: true
+          useHelmHooks: false
 
         # createUserJob: DISABLED. The chart's args template hardcodes
         # the admin password as a plaintext value (`-p {{ .password }}`)
