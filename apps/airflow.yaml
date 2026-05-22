@@ -164,6 +164,50 @@ spec:
           - name: AIRFLOW__TRIGGERER__TRIGGERER_HEALTH_CHECK_THRESHOLD
             value: "90"
 
+          # Remote logging to MinIO. Airflow's default log behavior stores
+          # task logs on the task pod's local disk + serves them via HTTP
+          # from the pod's hostname on port 8793. Under KubernetesExecutor
+          # each task pod is ephemeral (deleted on success), so the UI
+          # cannot retrieve logs once the task finishes — the hostname
+          # stops resolving. Remote-logging ships every task's log file
+          # to s3://airflow-logs/ on completion; the UI fetches them
+          # from there. Connection URI loaded via env var from the sealed
+          # Secret in the `secret:` block below.
+          - name: AIRFLOW__LOGGING__REMOTE_LOGGING
+            value: "True"
+          - name: AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER
+            value: "s3://airflow-logs/"
+          - name: AIRFLOW__LOGGING__REMOTE_LOG_CONN_ID
+            value: "aws_s3_logs"
+          - name: AIRFLOW__LOGGING__ENCRYPT_S3_LOGS
+            value: "False"
+          # AWS_CA_BUNDLE so the boto3 client inside Airflow trusts
+          # MinIO's cluster-CA-signed cert when shipping log files.
+          - name: AWS_CA_BUNDLE
+            value: /etc/ssl/k3s/ca.crt
+
+        # Per-Secret env-var injection. The chart's `secret:` mechanism
+        # creates env vars on every Airflow container by reading a key
+        # from a named Secret. Used here to load AIRFLOW_CONN_AWS_S3_LOGS
+        # (the connection URI for remote-logging) without baking it into
+        # values.
+        secret:
+          - envName: AIRFLOW_CONN_AWS_S3_LOGS
+            secretName: airflow-s3-logs-credentials
+            secretKey: AIRFLOW_CONN_AWS_S3_LOGS
+
+        # Mount the cluster CA so the boto3 client trusts MinIO's
+        # auto-cert. Same pattern as MLflow + Lakekeeper.
+        volumes:
+          - name: cluster-ca
+            configMap:
+              name: kube-root-ca.crt
+        volumeMounts:
+          - name: cluster-ca
+            mountPath: /etc/ssl/k3s/ca.crt
+            subPath: ca.crt
+            readOnly: true
+
         # External Postgres — disable the chart's bundled postgresql subchart.
         # Our metadata DB is postgres-data-platform/airflow (CNPG-managed).
         # The chart reads the connection URL from the sealed Secret below.
