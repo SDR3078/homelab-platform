@@ -76,8 +76,12 @@ def iceberg_smoke():
         con.execute("INSTALL iceberg; LOAD iceberg;")
         con.execute("INSTALL httpfs; LOAD httpfs;")
 
-        # Configure DuckDB's REST catalog secret pointing at Lakekeeper.
-        # No bearer token (Lakekeeper is in allowall auth mode for now).
+        # MinIO uses a Kubernetes-CSR-signed cert (cluster CA). DuckDB's
+        # httpfs S3 client doesn't respect AWS_CA_BUNDLE (that's boto3);
+        # it has its own ca_cert_file setting. Point at the same mounted
+        # cluster CA the rest of the platform uses.
+        con.execute("SET ca_cert_file = '/etc/ssl/k3s/ca.crt';")
+
         # TOKEN '' forces DuckDB to skip its default OAuth2 auth path
         # (which requires CLIENT_ID + CLIENT_SECRET). Lakekeeper is in
         # `allowall` auth mode for the homelab — no auth required.
