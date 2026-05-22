@@ -1,0 +1,87 @@
+# lakekeeper namespace — Iceberg REST Catalog server
+#
+# Houses the Lakekeeper catalog deployed via lakekeeper/lakekeeper (Helm
+# chart 0.11.0, app v0.12.2). Platform-side glue (this Namespace and the
+# two sealed Secrets in this directory) is applied by
+# apps/lakekeeper-bootstrap.yaml at sync-wave 0; the Helm chart
+# Application runs at wave 1.
+#
+# Cross-namespace dependencies:
+#   - postgres-data-platform-rw.data-platform.svc.cluster.local:5432
+#       Catalog metadata DB (database 'lakekeeper', role 'lakekeeper').
+#       Credentials live as Secret 'lakekeeper-credentials' in
+#       data-platform, reflected into this namespace by the reflector
+#       annotations on charts/data-platform/lakekeeper-credentials-sealed.yaml.
+#   - minio.data-platform.svc.cluster.local
+#       The actual Iceberg warehouse — Parquet data files + Iceberg
+#       metadata files live in bucket 'iceberg-warehouse'. NOT consumed
+#       by the catalog at install time; warehouse-S3 credentials get
+#       posted to Lakekeeper's REST API at warehouse-creation time
+#       (POST-DEPLOY) where Lakekeeper encrypts them with the
+#       encryptionKey and stores them in Postgres.
+#
+# Architecture note — Iceberg + Lakekeeper division of labor:
+#   MinIO is object storage. Iceberg is the table format spec. Lakekeeper
+#   is the catalog: it tracks WHICH tables exist + WHERE each table's
+#   current metadata file lives. Query engines (PyIceberg, Trino, etc.)
+#   ask the catalog for the metadata location, then read the data files
+#   directly from MinIO. The catalog is a thin metadata broker; actual
+#   data flows direct engine ↔ object storage.
+#
+# Pod Security Admission: 'restricted' is enforced. Lakekeeper's catalog
+# image is Rust + distroless (uid 65532/gid 65534 — "nonroot" of Google
+# distroless), so PSA-restricted compliance is mostly out-of-the-box.
+# Only podSecurityContext.{runAsNonRoot,seccompProfile} need explicit
+# overrides in apps/lakekeeper.yaml.
+#
+# ────────────────────────────────────────────────────────────────────────
+# Database provisioning — fully declarative
+# ────────────────────────────────────────────────────────────────────────
+# Database + role declared in charts/data-platform/postgres-cluster.yaml:
+#   - managed.roles entry: lakekeeper
+#   - Database CRD:        lakekeeper (owner: lakekeeper)
+# Password sealed at charts/data-platform/lakekeeper-credentials-sealed.yaml
+# with reflector annotations that mirror the unsealed Secret into this
+# namespace as 'lakekeeper-credentials'. The chart's externalDatabase
+# block references the mirrored Secret by name with overridden key paths
+# (username/password instead of the chart's default postgresql-user/
+# postgresql-password) — see apps/lakekeeper.yaml values block.
+#
+# ────────────────────────────────────────────────────────────────────────
+# Initial secret generation — imperative one-time
+# ────────────────────────────────────────────────────────────────────────
+# Two install-time secrets generated + sealed by /tmp/setup-lakekeeper-secrets.sh:
+#   1. lakekeeper-encryption-key — at-rest encryption for catalog-stored
+#      secrets (warehouse credentials, etc.). NEVER rotate; loss of this
+#      key means loss of all stored warehouse credentials, which means
+#      every Iceberg table becomes unreadable through the catalog.
+#   2. lakekeeper-s3-credentials — MinIO svcacct scoped to
+#      iceberg-warehouse bucket only via the policy committed at
+#      bootstrap/iceberg-warehouse-policy.json. Sealed at install but
+#      ONLY consumed post-deploy when warehouses are created via
+#      Lakekeeper's REST API (Phase 4 validation, then per future
+#      warehouse). The catalog itself does NOT read these.
+#
+# Plaintext: encryptionKey + svcacct keys both saved to password manager.
+# ────────────────────────────────────────────────────────────────────────
+# MinIO svcacct provisioning — imperative one-time
+# ────────────────────────────────────────────────────────────────────────
+# MinIO IAM has no CRD coverage. Service accounts must be created via
+# `mc admin user svcacct add` against the live Tenant. Procedure:
+# /tmp/setup-lakekeeper-secrets.sh — same shape as the postgres-backup
+# (Step 7a of rebuild.md) and mlflow-artifacts (Step 7b) svcacct flows.
+# Policy JSON is committed at bootstrap/iceberg-warehouse-policy.json.
+# ────────────────────────────────────────────────────────────────────────
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lakekeeper
+  labels:
+    app.kubernetes.io/name: lakekeeper
+    app.kubernetes.io/part-of: homelab-platform
+    app.kubernetes.io/managed-by: argocd
+
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted

@@ -1,0 +1,69 @@
+# lakekeeper bootstrap — namespace + sealed install-time secrets
+#
+# In-repo glue layered under the lakekeeper Helm Application (apps/lakekeeper.yaml).
+# This Application owns the cluster-side resources the chart depends on
+# but the chart itself does not declare:
+#   - Namespace 'lakekeeper' (declared in Git, not via CreateNamespace=true,
+#     so PSA labels and metadata are first-class)
+#   - SealedSecret 'lakekeeper-encryption-key' — chart's
+#     secretBackend.postgres.encryptionKeySecret reference. The chart has
+#     a helm-lookup auto-generation path for this but explicitly notes
+#     ArgoCD incompatibility (argoproj/argo-cd#5202: helm lookup can't
+#     query the live cluster during render). Pre-creating sealed avoids
+#     the ArgoCD-regenerates-on-every-sync trap.
+#   - SealedSecret 'lakekeeper-s3-credentials' — MinIO svcacct keys
+#     scoped to the iceberg-warehouse bucket. NOT consumed at chart
+#     install — only used post-deploy when warehouses are created via
+#     Lakekeeper's REST API. Sealed here for declarative reproducibility
+#     on rebuild.
+#
+# Database credential ('lakekeeper-credentials' in data-platform ns) is
+# NOT owned here — CNPG reads it from data-platform via the managed.roles
+# block in charts/data-platform/postgres-cluster.yaml. The chart consumes
+# the same Secret in this namespace via reflector mirroring (annotations
+# on the sealed source). The chart's externalDatabase block references
+# it by name with overridden key paths (username/password instead of the
+# chart's defaults postgresql-user/postgresql-password).
+#
+# Sync-wave 0 — runs before apps/lakekeeper.yaml (wave 1). The chart's
+# pods reference both the encryption key Secret and the reflected DB
+# credentials Secret, so they must materialize first. The sealed-secrets
+# controller decrypts on first reconcile; reflector mirrors the
+# data-platform-owned lakekeeper-credentials in parallel.
+#
+# Naming: '-bootstrap' matches the mlflow-bootstrap, airflow-bootstrap,
+# and wedding-site-bootstrap precedents.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: lakekeeper-bootstrap
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/SDR3078/homelab-platform.git
+    targetRevision: main
+    path: charts/lakekeeper
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: lakekeeper
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
