@@ -1,0 +1,30 @@
+# Pre-commit hooks for the homelab-platform repo.
+#
+# Most important: gitleaks scans every commit for accidentally-committed
+# secrets (DB connection strings, API keys, AWS creds, etc.). Critical
+# given the repo is public AND we're storing sealed-secrets + adding
+# DAG files that could easily leak a connection string if pasted carelessly.
+#
+# Setup once per devbox:
+#   pip install pre-commit
+#   pre-commit install
+# After that, every `git commit` runs these checks automatically.
+
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+        name: gitleaks (secret detection)
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+        exclude: '^charts/.*-sealed\.yaml$'  # sealed-secrets files have no trailing newline
+      - id: check-yaml
+        exclude: '^charts/.*-sealed\.yaml$'  # gitleaks-style files might fail yaml.safe_load
+      - id: check-added-large-files
+        args: ["--maxkb=500"]
+      - id: check-merge-conflict

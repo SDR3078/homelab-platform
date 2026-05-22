@@ -1,0 +1,5 @@
+# Files in airflow/dags/ that Airflow's DAG parser should ignore.
+# Patterns are regex (Airflow's default). One per line.
+#
+# Currently empty — all .py files in this folder are real DAGs.
+# Add patterns here when fixture/test/util .py files land alongside DAGs.

@@ -1,0 +1,60 @@
+# Parse-smoke-test for DAG-only changes. Catches ImportError + Python
+# syntax errors before git-sync ships a broken DAG into the scheduler.
+#
+# Path-filtered to airflow/dags/** so it doesn't fire on Dockerfile/
+# requirements/manifest changes.
+
+name: airflow-dag-parse
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "airflow/dags/**.py"
+      - ".github/workflows/airflow-dag-parse.yaml"
+  pull_request:
+    paths:
+      - "airflow/dags/**.py"
+      - ".github/workflows/airflow-dag-parse.yaml"
+  workflow_dispatch:
+
+jobs:
+  parse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Airflow + task-image deps
+        run: |
+          # Match the runtime stack so DAG imports resolve cleanly.
+          # Airflow's constraint file pins all its transitive deps for the
+          # given (airflow-version, python-version) combo — required for
+          # reliable pip resolution of apache-airflow itself.
+          AF_VER="3.2.0"
+          PY_VER="3.12"
+          CONSTRAINTS="https://raw.githubusercontent.com/apache/airflow/constraints-${AF_VER}/constraints-${PY_VER}.txt"
+          pip install --upgrade pip
+          pip install "apache-airflow==${AF_VER}" --constraint "${CONSTRAINTS}"
+          pip install --requirement airflow/requirements.txt
+
+      - name: Parse all DAGs
+        run: |
+          set -euo pipefail
+          export AIRFLOW_HOME=/tmp/airflow-ci
+          mkdir -p "$AIRFLOW_HOME"
+
+          # `airflow dags reserialize` walks the DAGs folder and parses each
+          # file. Any ImportError or syntax error fails the job here.
+          export AIRFLOW__CORE__DAGS_FOLDER="$(pwd)/airflow/dags"
+          export AIRFLOW__CORE__LOAD_EXAMPLES=False
+          export AIRFLOW__DATABASE__SQL_ALCHEMY_CONN="sqlite:///$AIRFLOW_HOME/airflow.db"
+
+          airflow db migrate
+          airflow dags reserialize
+
+          echo "✓ All DAGs parse cleanly."

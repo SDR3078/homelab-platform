@@ -315,15 +315,43 @@ spec:
           enabled: false       # Connection pooler — single-instance Postgres doesn't need it
 
         # ──────────── DAG source ────────────────────────────────────────
-        # No DAGs at install time. The chart boots with an empty DAGs
-        # folder and the UI shows no pipelines. Re-enable gitSync when
-        # there's a DAG repo worth syncing (likely once Lakekeeper +
-        # Iceberg land and the first concrete pipeline appears).
+        # git-sync sidecar pulls DAGs from this same homelab-platform
+        # repo, subdirectory airflow/dags/. Monorepo layout per session 10:
+        # DAGs are platform-level workloads (not tenant code), so they
+        # belong with the platform manifests rather than in a separate
+        # repo. See airflow/README.md for the full pattern + CI behavior.
+        #
+        # period: 30s — chart default is 5s which is too aggressive for
+        # the homelab git refresh cadence. 30s feels-instant for the
+        # developer (push → DAG visible in UI within ~30s) without
+        # hammering GitHub.
+        #
+        # PSA-restricted: chart's chart-wide securityContexts don't apply
+        # to git-sync (separate code path). Explicit container security
+        # context set here.
         dags:
           persistence:
             enabled: false
           gitSync:
-            enabled: false
+            enabled: true
+            repo: https://github.com/SDR3078/homelab-platform.git
+            branch: main
+            rev: HEAD
+            ref: main
+            depth: 1
+            subPath: airflow/dags
+            period: 30s
+            uid: 65533
+            securityContexts:
+              container:
+                runAsNonRoot: true
+                runAsUser: 65533
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop:
+                    - ALL
+                seccompProfile:
+                  type: RuntimeDefault
 
         # ──────────── Lifecycle jobs ────────────────────────────────────
         # migrateDatabaseJob: runs `airflow db upgrade` on chart install

@@ -1,0 +1,25 @@
+# Top-level Python deps for the homelab Airflow task image.
+#
+# Range-pinned per major.minor for security-patch absorption with
+# breaking-change protection. Upgrade in PR + smoke-test before bumping
+# the upper bounds.
+#
+# Future enhancement (per platform-engineer review): switch to two-file
+# pattern with requirements.lock generated via `pip-compile --generate-hashes`
+# for full transitive + hash pinning. For homelab v1, range-pinned is
+# good enough.
+
+# Iceberg client + REST catalog support
+pyiceberg[s3fs,pyarrow]>=0.10.0,<0.11.0
+
+# Analytical query engine + Iceberg extension (does the actual data writes,
+# bypasses pyiceberg's FsspecFileIO + S3V4RestSigner gap)
+duckdb>=1.4.0,<2.0.0
+
+# DataFrame interop — pandas + pyarrow used by most ML libs
+pandas>=2.2.0,<3.0.0
+pyarrow>=18.0.0,<22.0.0
+
+# requests is already in airflow base, but pin defensively for the
+# Lakekeeper REST calls
+requests>=2.32.0,<3.0.0

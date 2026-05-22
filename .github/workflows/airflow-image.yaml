@@ -1,0 +1,120 @@
+# Build + push the custom Airflow task image on changes to its Dockerfile
+# or requirements.txt, then auto-bump apps/airflow.yaml's defaultAirflowTag
+# so ArgoCD rolls the new image.
+#
+# Path-filtered to avoid rebuilding on DAG-only or unrelated changes.
+
+name: airflow-image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "airflow/Dockerfile"
+      - "airflow/requirements.txt"
+      - ".github/workflows/airflow-image.yaml"
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/homelab-platform-airflow
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # to auto-bump apps/airflow.yaml
+      packages: write  # to push to GHCR
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # default checkout uses GITHUB_TOKEN, which we'll re-use to
+          # commit the auto-bump back to main without a PAT
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set lowercase image + sha tag
+        id: meta
+        run: |
+          LC_IMAGE=$(echo "${IMAGE}" | tr '[:upper:]' '[:lower:]')
+          SHA_SHORT=$(echo "${GITHUB_SHA}" | cut -c1-12)
+          echo "image=${LC_IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "tag=${SHA_SHORT}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build + push image
+        uses: docker/build-push-action@v6
+        with:
+          context: airflow
+          file: airflow/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+            ${{ steps.meta.outputs.image }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Bump defaultAirflowTag in apps/airflow.yaml
+        run: |
+          set -euo pipefail
+          NEW_TAG="${{ steps.meta.outputs.tag }}"
+          NEW_REPO="${{ steps.meta.outputs.image }}"
+
+          # Replace or insert defaultAirflowRepository + defaultAirflowTag
+          # using sed. Idempotent — re-running with the same SHA is a no-op.
+          python3 <<EOF
+          from pathlib import Path
+          import re
+
+          p = Path("apps/airflow.yaml")
+          text = p.read_text()
+
+          # Update defaultAirflowTag (already exists in chart values; pattern is
+          # `        defaultAirflowTag: "3.2.0"` — preserve indent)
+          text = re.sub(
+              r'(\s+defaultAirflowTag:\s*)"[^"]*"',
+              r'\g<1>"${NEW_TAG}"',
+              text,
+              count=1,
+          )
+
+          # Insert or update defaultAirflowRepository immediately above
+          # defaultAirflowTag.
+          if 'defaultAirflowRepository:' in text:
+              text = re.sub(
+                  r'(\s+defaultAirflowRepository:\s*)\S+',
+                  r'\g<1>${NEW_REPO}',
+                  text,
+                  count=1,
+              )
+          else:
+              text = re.sub(
+                  r'(\s+)(defaultAirflowTag:\s*"[^"]*")',
+                  r'\1defaultAirflowRepository: ${NEW_REPO}\n\1\g<2>',
+                  text,
+                  count=1,
+              )
+
+          p.write_text(text)
+          EOF
+
+      - name: Commit + push bump (if changed)
+        run: |
+          set -euo pipefail
+          if git diff --quiet apps/airflow.yaml; then
+            echo "No bump needed — apps/airflow.yaml unchanged."
+            exit 0
+          fi
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/airflow.yaml
+          git commit -m "chore(airflow): defaultAirflowTag → ${{ steps.meta.outputs.tag }} [skip ci]"
+          git push
