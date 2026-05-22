@@ -79,7 +79,9 @@ spec:
         # so the bundled Bash/CLI helpers + the actual airflow binary stay
         # in lockstep. Bump together with chart targetRevision.
         airflowVersion: "3.2.0"
-        defaultAirflowTag: "3.2.0"
+        defaultAirflowRepository: ghcr.io/sdr3078/homelab-platform-airflow
+
+        defaultAirflowTag: "3f9a0c83db62"
 
         # Chart-wide revisionHistoryLimit. Applies to every Deployment +
         # StatefulSet the chart renders unless a component overrides it.
