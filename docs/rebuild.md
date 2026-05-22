@@ -300,6 +300,55 @@ re-created via POST /management/v1/warehouse with the svcacct creds
 embedded — see the per-tenant runbook in
 `charts/lakekeeper/namespace.yaml`'s header.
 
+**IMPORTANT — warehouse storage profile must use `remote-signing-enabled: false`.**
+Lakekeeper's chart default (`flavor: minio`, remote-signing on) advertises
+its S3V4RestSigner endpoint to clients, but every engine we've tested
+(PyIceberg's FsspecFileIO, DuckDB-iceberg) either implements it
+incompletely or ignores it — causing writes to fail with AccessDenied
+or HTTP 403. The fix is per-warehouse storage profile config; chart
+values are NOT involved.
+
+Warehouse-create body that works (use this shape in
+`/tmp/lakekeeper-validate.sh` or any future warehouse-create flow):
+```json
+{
+  "warehouse-name": "demo",
+  "project-id": "00000000-0000-0000-0000-000000000000",
+  "storage-profile": {
+    "type": "s3",
+    "bucket": "iceberg-warehouse",
+    "key-prefix": "warehouses/demo",
+    "endpoint": "https://minio.data-platform.svc.cluster.local",
+    "region": "us-east-1",
+    "path-style-access": true,
+    "flavor": "s3-compat",
+    "sts-enabled": false,
+    "remote-signing-enabled": false
+  },
+  "storage-credential": {
+    "type": "s3",
+    "credential-type": "access-key",
+    "aws-access-key-id": "<svcacct key>",
+    "aws-secret-access-key": "<svcacct secret>"
+  },
+  "delete-profile": {"type": "hard"}
+}
+```
+
+With remote-signing off, clients are responsible for sending their own
+S3 credentials. The platform's pattern: reflect
+`charts/lakekeeper/lakekeeper-s3-credentials-sealed.yaml` into the
+client namespace (e.g., airflow) + load as env vars `LAKE_S3_ACCESS_KEY_ID`
+/ `LAKE_S3_SECRET_ACCESS_KEY`; clients pass those into PyIceberg's
+RestCatalog as `s3.access-key-id` / `s3.secret-access-key` (see
+`airflow/dags/iceberg_smoke.py` for the live example).
+
+To patch an EXISTING warehouse whose storage profile was created with
+remote-signing on (e.g., from a stale runbook), use
+`POST /management/v1/warehouse/{id}/storage` with the full profile
+above (Lakekeeper requires the credential block re-supplied on
+storage-profile updates).
+
 ### 8. Verify backups end-to-end
 
 ```bash
