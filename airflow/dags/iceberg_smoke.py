@@ -70,6 +70,7 @@ def iceberg_smoke():
     def write_via_duckdb(namespace: str) -> int:
         """Attach Lakekeeper as a DuckDB iceberg catalog, create table +
         insert rows. Returns the number of rows inserted."""
+        import os
         import duckdb
 
         con = duckdb.connect()
@@ -81,6 +82,26 @@ def iceberg_smoke():
         # it has its own ca_cert_file setting. Point at the same mounted
         # cluster CA the rest of the platform uses.
         con.execute("SET ca_cert_file = '/etc/ssl/k3s/ca.crt';")
+
+        # Explicit S3 SECRET with the iceberg-warehouse svcacct credentials.
+        # Bypasses Lakekeeper's S3V4RestSigner remote-signing protocol
+        # (which DuckDB doesn't implement) — DuckDB uses these creds to
+        # talk to MinIO directly. Env vars are mirrored into this namespace
+        # from charts/lakekeeper/lakekeeper-s3-credentials-sealed.yaml via
+        # reflector annotations + apps/airflow.yaml's `secret:` block.
+        con.execute(
+            f"""
+            CREATE OR REPLACE SECRET s3_minio (
+                TYPE s3,
+                KEY_ID '{os.environ["LAKE_S3_ACCESS_KEY_ID"]}',
+                SECRET '{os.environ["LAKE_S3_SECRET_ACCESS_KEY"]}',
+                ENDPOINT 'minio.data-platform.svc.cluster.local',
+                URL_STYLE 'path',
+                USE_SSL 'true',
+                REGION 'us-east-1'
+            );
+            """
+        )
 
         # TOKEN '' forces DuckDB to skip its default OAuth2 auth path
         # (which requires CLIENT_ID + CLIENT_SECRET). Lakekeeper is in
@@ -124,14 +145,26 @@ def iceberg_smoke():
         """Re-attach the catalog from a fresh DuckDB connection (proves the
         rows survive in MinIO, not just in this process's memory). Logs the
         rows + asserts count matches what we wrote."""
+        import os
         import duckdb
 
         con = duckdb.connect()
         con.execute("INSTALL iceberg; LOAD iceberg;")
         con.execute("INSTALL httpfs; LOAD httpfs;")
-        # TOKEN '' forces DuckDB to skip its default OAuth2 auth path
-        # (which requires CLIENT_ID + CLIENT_SECRET). Lakekeeper is in
-        # `allowall` auth mode for the homelab — no auth required.
+        con.execute("SET ca_cert_file = '/etc/ssl/k3s/ca.crt';")
+        con.execute(
+            f"""
+            CREATE OR REPLACE SECRET s3_minio (
+                TYPE s3,
+                KEY_ID '{os.environ["LAKE_S3_ACCESS_KEY_ID"]}',
+                SECRET '{os.environ["LAKE_S3_SECRET_ACCESS_KEY"]}',
+                ENDPOINT 'minio.data-platform.svc.cluster.local',
+                URL_STYLE 'path',
+                USE_SSL 'true',
+                REGION 'us-east-1'
+            );
+            """
+        )
         con.execute(
             f"""
             CREATE OR REPLACE SECRET lk_iceberg (

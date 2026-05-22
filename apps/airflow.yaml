@@ -188,13 +188,24 @@ spec:
 
         # Per-Secret env-var injection. The chart's `secret:` mechanism
         # creates env vars on every Airflow container by reading a key
-        # from a named Secret. Used here to load AIRFLOW_CONN_AWS_S3_LOGS
-        # (the connection URI for remote-logging) without baking it into
-        # values.
+        # from a named Secret. Used here to load:
+        #   - AIRFLOW_CONN_AWS_S3_LOGS — remote-logging connection URI
+        #   - LAKE_S3_ACCESS_KEY_ID / LAKE_S3_SECRET_ACCESS_KEY — MinIO
+        #     svcacct credentials scoped to the iceberg-warehouse bucket.
+        #     Mirrored from charts/lakekeeper/lakekeeper-s3-credentials-sealed.yaml
+        #     via reflector annotations on the sealed source. Used by
+        #     Iceberg DAGs (DuckDB-based) that bypass Lakekeeper's
+        #     remote-signing path with explicit S3 credentials.
         secret:
           - envName: AIRFLOW_CONN_AWS_S3_LOGS
             secretName: airflow-s3-logs-credentials
             secretKey: AIRFLOW_CONN_AWS_S3_LOGS
+          - envName: LAKE_S3_ACCESS_KEY_ID
+            secretName: lakekeeper-s3-credentials
+            secretKey: AWS_ACCESS_KEY_ID
+          - envName: LAKE_S3_SECRET_ACCESS_KEY
+            secretName: lakekeeper-s3-credentials
+            secretKey: AWS_SECRET_ACCESS_KEY
 
         # Mount the cluster CA so the boto3 client trusts MinIO's
         # auto-cert. Same pattern as MLflow + Lakekeeper.
