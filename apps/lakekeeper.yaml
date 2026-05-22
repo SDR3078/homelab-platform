@@ -201,6 +201,27 @@ spec:
                 limits:
                   memory: 128Mi
 
+          # Mount the cluster CA so Lakekeeper trusts MinIO's TLS cert
+          # (MinIO uses a Kubernetes-CSR-signed cert from the k3s cluster
+          # CA; kube-root-ca.crt is auto-injected into every namespace).
+          # Required for warehouse create-time S3 reachability checks AND
+          # for any read/write Lakekeeper does on behalf of an engine.
+          # Same pattern as MLflow (apps/mlflow.yaml).
+          extraVolumes:
+            - name: cluster-ca
+              configMap:
+                name: kube-root-ca.crt
+          extraVolumeMounts:
+            - name: cluster-ca
+              mountPath: /etc/ssl/k3s/ca.crt
+              subPath: ca.crt
+              readOnly: true
+          extraEnv:
+            - name: AWS_CA_BUNDLE
+              value: /etc/ssl/k3s/ca.crt
+            - name: SSL_CERT_FILE
+              value: /etc/ssl/k3s/ca.crt
+
           ingress:
             enabled: true
             ingressClassName: nginx
