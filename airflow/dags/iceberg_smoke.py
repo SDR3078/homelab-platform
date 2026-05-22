@@ -1,26 +1,26 @@
 """iceberg_smoke — first real Iceberg DAG against Lakekeeper.
 
 Validates the data path end-to-end:
-  Airflow → DuckDB → Lakekeeper REST Catalog → MinIO (s3://iceberg-warehouse/)
+  Airflow -> PyIceberg (FsspecFileIO) -> Lakekeeper REST -> MinIO (s3://iceberg-warehouse/)
 
-Approach: DuckDB's `iceberg` extension supports the Iceberg REST Catalog
-spec since 1.4. Attaches Lakekeeper as a logical catalog, creates the
-namespace + table, inserts rows, reads them back. Bypasses the
-pyiceberg FsspecFileIO + S3V4RestSigner gap discovered in session 9 —
-DuckDB has its own native S3 client + iceberg writer.
+History (sessions 9 + 10):
+  - DuckDB-iceberg path failed: even with an explicit `CREATE SECRET (TYPE s3)`,
+    DuckDB's iceberg writer uses the catalog-vended storage-credentials in
+    preference to user secrets. With Lakekeeper's default warehouse settings,
+    those vended credentials are EMPTY (Lakekeeper expects remote-signing OR
+    STS, neither of which DuckDB implements for MinIO).
+  - PyIceberg + the default PyArrow FileIO failed: PyArrow's bundled S3 client
+    doesn't honor `AWS_CA_BUNDLE` (curl SSL error 60 against MinIO's
+    Kubernetes-CSR-signed cert).
+  - The Lakekeeper warehouse storage profile was patched out-of-band to
+    `remote-signing-enabled: false` (POST /management/v1/warehouse/{id}/storage),
+    which stops the catalog from advertising the signer endpoint to clients.
+  - FsspecFileIO + static creds + the env-injected cluster CA bundle works
+    cleanly. That is what this DAG uses.
 
-CAVEAT: DuckDB + Lakekeeper's REST + remote-signing integration is
-relatively new. If DuckDB's S3 client doesn't handle Lakekeeper's
-remote-signing protocol (the same gap pyiceberg's fsspec backend has),
-the write step will fail with AccessDenied — in which case we surface
-which step broke and iterate (likely by configuring DuckDB to use
-Lakekeeper's vended credentials, or by managing the warehouse to vend
-static credentials instead of remote-signing).
-
-Warehouse 'demo' was created via /tmp/lakekeeper-validate.sh in
-session 9 with the airflow MinIO svcacct scoped to iceberg-warehouse.
-The svcacct creds are stored encrypted in Lakekeeper's Postgres backend
-under the catalog's encryption key.
+Warehouse 'demo' was created via /tmp/setup-lakekeeper-secrets.sh, the airflow
+MinIO svcacct is scoped to bucket iceberg-warehouse, and the keys are reflected
+into the airflow namespace as LAKE_S3_ACCESS_KEY_ID / LAKE_S3_SECRET_ACCESS_KEY.
 
 Schedule: manual trigger only.
 """
@@ -38,6 +38,29 @@ NAMESPACE = "test"
 TABLE = "iceberg_smoke"
 
 
+def _build_catalog():
+    """Build a RestCatalog handle that bypasses Lakekeeper's empty
+    vended-credentials by passing our own static svcacct keys in. Uses
+    FsspecFileIO so that the standard s3fs/aiobotocore stack honors
+    AWS_CA_BUNDLE for MinIO's cluster-CA-signed cert."""
+    import os
+    from pyiceberg.catalog.rest import RestCatalog
+
+    return RestCatalog(
+        name=WAREHOUSE,
+        uri=f"{LAKEKEEPER_URL}/catalog",
+        warehouse=WAREHOUSE,
+        **{
+            "py-io-impl": "pyiceberg.io.fsspec.FsspecFileIO",
+            "s3.endpoint": "https://minio.data-platform.svc.cluster.local/",
+            "s3.access-key-id": os.environ["LAKE_S3_ACCESS_KEY_ID"],
+            "s3.secret-access-key": os.environ["LAKE_S3_SECRET_ACCESS_KEY"],
+            "s3.region": "us-east-1",
+            "s3.path-style-access": "true",
+        },
+    )
+
+
 @dag(
     dag_id="iceberg_smoke",
     start_date=datetime(2026, 5, 22),
@@ -49,149 +72,58 @@ TABLE = "iceberg_smoke"
 def iceberg_smoke():
     @task
     def ensure_namespace() -> str:
-        """Create the Iceberg namespace via PyIceberg's RestCatalog (catalog
-        ops are the proven-working path — read confirmed in session 9)."""
-        from pyiceberg.catalog.rest import RestCatalog
-
-        catalog = RestCatalog(
-            name=WAREHOUSE,
-            uri=f"{LAKEKEEPER_URL}/catalog",
-            warehouse=WAREHOUSE,
-        )
+        catalog = _build_catalog()
         try:
             catalog.create_namespace(NAMESPACE)
             print(f"Created namespace {NAMESPACE!r}")
         except Exception as e:
-            # AlreadyExistsException is fine — idempotent.
             print(f"Namespace {NAMESPACE!r} already exists: {e}")
         return NAMESPACE
 
     @task
-    def write_via_duckdb(namespace: str) -> int:
-        """Attach Lakekeeper as a DuckDB iceberg catalog, create table +
-        insert rows. Returns the number of rows inserted."""
-        import os
-        import duckdb
+    def write_via_pyiceberg(namespace: str) -> int:
+        """Drop + recreate the table, append 5 rows, return row count."""
+        import pyarrow as pa
 
-        con = duckdb.connect()
-        con.execute("INSTALL iceberg; LOAD iceberg;")
-        con.execute("INSTALL httpfs; LOAD httpfs;")
+        catalog = _build_catalog()
+        ident = (namespace, TABLE)
 
-        # MinIO uses a Kubernetes-CSR-signed cert (cluster CA). DuckDB's
-        # httpfs S3 client doesn't respect AWS_CA_BUNDLE (that's boto3);
-        # it has its own ca_cert_file setting. Point at the same mounted
-        # cluster CA the rest of the platform uses.
-        con.execute("SET ca_cert_file = '/etc/ssl/k3s/ca.crt';")
+        try:
+            catalog.drop_table(ident)
+            print(f"Dropped existing table {ident}")
+        except Exception:
+            pass
 
-        # Explicit S3 SECRET with the iceberg-warehouse svcacct credentials.
-        # Bypasses Lakekeeper's S3V4RestSigner remote-signing protocol
-        # (which DuckDB doesn't implement) — DuckDB uses these creds to
-        # talk to MinIO directly. Env vars are mirrored into this namespace
-        # from charts/lakekeeper/lakekeeper-s3-credentials-sealed.yaml via
-        # reflector annotations + apps/airflow.yaml's `secret:` block.
-        con.execute(
-            f"""
-            CREATE OR REPLACE SECRET s3_minio (
-                TYPE s3,
-                KEY_ID '{os.environ["LAKE_S3_ACCESS_KEY_ID"]}',
-                SECRET '{os.environ["LAKE_S3_SECRET_ACCESS_KEY"]}',
-                ENDPOINT 'minio.data-platform.svc.cluster.local',
-                URL_STYLE 'path',
-                USE_SSL 'true',
-                REGION 'us-east-1'
-            );
-            """
+        rows = pa.table(
+            {
+                "id": [1, 2, 3, 4, 5],
+                "name": ["alice", "bob", "carol", "dave", "eve"],
+                "value": [100, 200, 300, 400, 500],
+            }
         )
-
-        # TOKEN '' forces DuckDB to skip its default OAuth2 auth path
-        # (which requires CLIENT_ID + CLIENT_SECRET). Lakekeeper is in
-        # `allowall` auth mode for the homelab — no auth required.
-        con.execute(
-            f"""
-            CREATE OR REPLACE SECRET lk_iceberg (
-                TYPE iceberg,
-                ENDPOINT '{LAKEKEEPER_URL}/catalog',
-                TOKEN ''
-            );
-            """
-        )
-        con.execute(
-            f"ATTACH '{WAREHOUSE}' AS lake (TYPE iceberg, SECRET lk_iceberg);"
-        )
-
-        # DuckDB-Iceberg doesn't support CREATE OR REPLACE — must drop +
-        # create as separate statements. DROP IF EXISTS keeps the DAG
-        # idempotent across runs.
-        con.execute(f"DROP TABLE IF EXISTS lake.{namespace}.{TABLE};")
-        con.execute(
-            f"""
-            CREATE TABLE lake.{namespace}.{TABLE} AS
-            SELECT * FROM (VALUES
-                (1, 'alice',   100),
-                (2, 'bob',     200),
-                (3, 'carol',   300),
-                (4, 'dave',    400),
-                (5, 'eve',     500)
-            ) AS tbl(id, name, value);
-            """
-        )
-
-        n = con.execute(f"SELECT COUNT(*) FROM lake.{namespace}.{TABLE}").fetchone()[0]
-        print(f"Wrote {n} rows to lake.{namespace}.{TABLE}")
+        tbl = catalog.create_table(ident, schema=rows.schema)
+        tbl.append(rows)
+        n = len(tbl.scan().to_arrow())
+        print(f"Wrote {n} rows to {namespace}.{TABLE}")
         return n
 
     @task
-    def read_back_via_duckdb(namespace: str, expected_rows: int) -> None:
-        """Re-attach the catalog from a fresh DuckDB connection (proves the
-        rows survive in MinIO, not just in this process's memory). Logs the
-        rows + asserts count matches what we wrote."""
-        import os
-        import duckdb
-
-        con = duckdb.connect()
-        con.execute("INSTALL iceberg; LOAD iceberg;")
-        con.execute("INSTALL httpfs; LOAD httpfs;")
-        con.execute("SET ca_cert_file = '/etc/ssl/k3s/ca.crt';")
-        con.execute(
-            f"""
-            CREATE OR REPLACE SECRET s3_minio (
-                TYPE s3,
-                KEY_ID '{os.environ["LAKE_S3_ACCESS_KEY_ID"]}',
-                SECRET '{os.environ["LAKE_S3_SECRET_ACCESS_KEY"]}',
-                ENDPOINT 'minio.data-platform.svc.cluster.local',
-                URL_STYLE 'path',
-                USE_SSL 'true',
-                REGION 'us-east-1'
-            );
-            """
-        )
-        con.execute(
-            f"""
-            CREATE OR REPLACE SECRET lk_iceberg (
-                TYPE iceberg,
-                ENDPOINT '{LAKEKEEPER_URL}/catalog',
-                TOKEN ''
-            );
-            """
-        )
-        con.execute(
-            f"ATTACH '{WAREHOUSE}' AS lake (TYPE iceberg, SECRET lk_iceberg);"
-        )
-
-        rows = con.execute(
-            f"SELECT id, name, value FROM lake.{namespace}.{TABLE} ORDER BY id"
-        ).fetchall()
-        print(f"Read {len(rows)} rows:")
-        for r in rows:
+    def read_back_via_pyiceberg(namespace: str, expected_rows: int) -> None:
+        """Fresh catalog handle proves rows persisted to MinIO, not just
+        in-process state."""
+        catalog = _build_catalog()
+        tbl = catalog.load_table((namespace, TABLE))
+        result = tbl.scan().to_arrow().to_pylist()
+        print(f"Read {len(result)} rows:")
+        for r in result:
             print(f"  {r}")
-
-        assert len(rows) == expected_rows, (
-            f"Row count mismatch — wrote {expected_rows}, read {len(rows)}"
+        assert len(result) == expected_rows, (
+            f"Row count mismatch -- wrote {expected_rows}, read {len(result)}"
         )
 
     ns = ensure_namespace()
-    n = write_via_duckdb(ns)
-    read_back_via_duckdb(ns, n)
+    n = write_via_pyiceberg(ns)
+    read_back_via_pyiceberg(ns, n)
 
 
 iceberg_smoke()
