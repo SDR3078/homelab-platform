@@ -78,11 +78,15 @@ def iceberg_smoke():
 
         # Configure DuckDB's REST catalog secret pointing at Lakekeeper.
         # No bearer token (Lakekeeper is in allowall auth mode for now).
+        # TOKEN '' forces DuckDB to skip its default OAuth2 auth path
+        # (which requires CLIENT_ID + CLIENT_SECRET). Lakekeeper is in
+        # `allowall` auth mode for the homelab — no auth required.
         con.execute(
             f"""
             CREATE OR REPLACE SECRET lk_iceberg (
                 TYPE iceberg,
-                ENDPOINT '{LAKEKEEPER_URL}/catalog'
+                ENDPOINT '{LAKEKEEPER_URL}/catalog',
+                TOKEN ''
             );
             """
         )
@@ -119,11 +123,15 @@ def iceberg_smoke():
         con = duckdb.connect()
         con.execute("INSTALL iceberg; LOAD iceberg;")
         con.execute("INSTALL httpfs; LOAD httpfs;")
+        # TOKEN '' forces DuckDB to skip its default OAuth2 auth path
+        # (which requires CLIENT_ID + CLIENT_SECRET). Lakekeeper is in
+        # `allowall` auth mode for the homelab — no auth required.
         con.execute(
             f"""
             CREATE OR REPLACE SECRET lk_iceberg (
                 TYPE iceberg,
-                ENDPOINT '{LAKEKEEPER_URL}/catalog'
+                ENDPOINT '{LAKEKEEPER_URL}/catalog',
+                TOKEN ''
             );
             """
         )
