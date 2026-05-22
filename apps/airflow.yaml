@@ -388,10 +388,32 @@ spec:
         # Storage cost: one completed Job object + one terminated pod (~few
         # KiB of etcd) — trivial vs. spawning a fresh apache/airflow:3.2.0
         # container every 5 minutes (~22% node CPU spike per cycle).
+        #
+        # jobAnnotations.argocd.argoproj.io/sync-options — handles the
+        # IMAGE-TAG-BUMP case (session 10, 2026-05-22). When CI publishes
+        # a new image and apps/airflow.yaml's defaultAirflowTag changes,
+        # ArgoCD sees a real diff on the migration Job's spec.template
+        # (new image:tag) and tries to apply it. spec.template is
+        # immutable on Job objects, so plain SSA/apply fails with
+        # "field is immutable" and the operation gets STUCK retrying
+        # the impossible patch — only a manual
+        # `kubectl patch app airflow -n argocd --type=json
+        # -p '[{"op":"remove","path":"/operation"}]'` unsticks it.
+        # ignoreDifferences (below) does NOT save us here because that
+        # only suppresses DRIFT detection (deciding-to-sync); once a sync
+        # IS triggered by a genuine source change, ArgoCD applies the
+        # rendered manifest regardless. Replace=true,Force=true together
+        # tell ArgoCD to use `kubectl replace --force` for THIS resource,
+        # which deletes + recreates the Job (bypassing immutability).
+        # Per-resource annotation (not app-wide syncOption) so only the
+        # migration Job gets the destructive treatment — everything else
+        # uses the safer default SSA path.
         migrateDatabaseJob:
           enabled: true
           useHelmHooks: false
           ttlSecondsAfterFinished: ~
+          jobAnnotations:
+            argocd.argoproj.io/sync-options: Replace=true,Force=true
 
         # createUserJob: DISABLED. The chart's args template hardcodes
         # the admin password as a plaintext value (`-p {{ .password }}`)
