@@ -189,3 +189,4 @@ spec:
     - name: mlflow-artifacts
     - name: raw-data
     - name: postgres-backups
+    - name: airflow-logs
