@@ -42,7 +42,12 @@ To be populated as sessions progress:
 - [x] MLflow (session 7)
 - [x] Airflow (session 8) — Dagster originally planned, switched after a
       cross-orchestrator comparison; see session-2026-05-13.md
-- [ ] Lakekeeper + first pipeline (next)
+- [x] Lakekeeper Iceberg REST Catalog (session 9) — API + read path
+      validated; write-path validation deferred to next session due to
+      a pyiceberg-vs-Lakekeeper remote-signing interop bug. See
+      session-2026-05-22.md.
+- [ ] Trino + first concrete Iceberg DAG (next — validates Lakekeeper
+      write path with a query engine that has proper RestSigner support)
 - [ ] Full medallion + model registry
 - [ ] Data quality + scheduling
 - [ ] kube-prometheus-stack

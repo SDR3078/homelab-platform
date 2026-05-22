@@ -35,6 +35,14 @@ You will need:
   - `homelab-platform/airflow-admin` (Airflow web UI admin password;
     used by `/tmp/setup-airflow-admin.sh` after every rebuild because
     the ab_user table is recreated empty)
+  - `homelab-platform/lakekeeper-encryption-key` (at-rest encryption
+    key for Lakekeeper's catalog-stored secrets; NEVER rotates —
+    losing the key invalidates all catalog-stored warehouse credentials
+    forever; only needed for master-key-loss recovery — sealed in Git)
+  - `homelab-platform/minio-iceberg-warehouse-svcacct` (MinIO svcacct
+    keys scoped to the iceberg-warehouse bucket; only needed for
+    rotation or master-key-loss recovery — sealed in Git, but ALSO
+    required as the body of warehouse-create API requests post-rebuild)
 - DNS for `*.lab.batzbak.top` (or your domain) resolvable from clients
 - Devbox with `kubectl`, `helm`, `argocd`, `kubeseal`, `mc` CLIs
 
@@ -117,6 +125,12 @@ Within 5-10 minutes ArgoCD will:
     orchestrator (api-server + scheduler + triggerer + dagProcessor +
     cleanup CronJob). Migration Job runs automatically and populates
     the schema; admin user creation is the manual Step 10.
+  - lakekeeper-bootstrap (wave 0) + lakekeeper (wave 1) — Lakekeeper
+    Iceberg REST Catalog. Migration Job runs automatically. Once
+    healthy, the catalog needs to be BOOTSTRAPPED via POST
+    /management/v1/bootstrap and warehouses CREATED via POST
+    /management/v1/warehouse (one-time per cluster lifecycle, see the
+    runbook header in charts/lakekeeper/namespace.yaml).
 
 Expected transient state: Postgres backups will FAIL in this window
 because `postgres-backup-credentials` authenticates against an svcacct
@@ -161,6 +175,7 @@ svcacct must be recreated. Two are needed at this point:
 |---|---|---|
 | postgres-backup | `bootstrap/postgres-backup-policy.json` | `charts/data-platform/postgres-backup-credentials-sealed.yaml` |
 | mlflow-artifacts | `bootstrap/mlflow-artifacts-policy.json` | `charts/mlflow/mlflow-s3-credentials-sealed.yaml` |
+| iceberg-warehouse | `bootstrap/iceberg-warehouse-policy.json` | `charts/lakekeeper/lakekeeper-s3-credentials-sealed.yaml` |
 
 #### 7a. postgres-backup svcacct
 
@@ -246,6 +261,44 @@ git push
 ArgoCD syncs → controller decrypts → mlflow Deployment's
 `artifactRoot.s3.existingSecret` reference resolves and the pod boots
 its first artifact connection successfully.
+
+#### 7c. iceberg-warehouse svcacct + Lakekeeper encryption key
+
+Same scripted shape as 7b. The script also generates the Lakekeeper
+encryption key (used for at-rest encryption of catalog-stored
+credentials in Postgres). The encryption key NEVER rotates — losing
+it means losing access to all catalog-stored warehouse credentials.
+
+```bash
+/tmp/setup-lakekeeper-secrets.sh
+```
+
+The script:
+1. Generates a 32-byte random encryption key (base64 urlsafe)
+2. Prompts for MinIO root password
+3. Creates the named policy from `bootstrap/iceberg-warehouse-policy.json`
+4. Creates a service account scoped to the iceberg-warehouse bucket
+5. Seals BOTH into `charts/lakekeeper/`:
+   - `lakekeeper-encryption-key-sealed.yaml` (key: `encryptionKey`)
+   - `lakekeeper-s3-credentials-sealed.yaml` (keys: AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY)
+6. Prints both sets of plaintext for the password manager:
+   - `homelab-platform/lakekeeper-encryption-key` (DO NOT rotate)
+   - `homelab-platform/minio-iceberg-warehouse-svcacct` (can rotate; reseal + warehouse re-creation needed)
+
+After resealing, commit:
+
+```bash
+git add charts/lakekeeper/lakekeeper-encryption-key-sealed.yaml \
+        charts/lakekeeper/lakekeeper-s3-credentials-sealed.yaml
+git commit -m "reseal lakekeeper secrets for new MinIO Tenant"
+git push
+```
+
+ArgoCD syncs → controller decrypts → Lakekeeper catalog pod boots,
+migrations run, the API is reachable. Warehouses then need to be
+re-created via POST /management/v1/warehouse with the svcacct creds
+embedded — see the per-tenant runbook in
+`charts/lakekeeper/namespace.yaml`'s header.
 
 ### 8. Verify backups end-to-end
 
