@@ -5,12 +5,11 @@ Validates the end-to-end Airflow pipeline:
 2. Scheduler parses the DAG without errors
 3. KubernetesExecutor spawns a task pod using the custom image
 4. Task pod runs Python with pyiceberg + duckdb + pandas importable
-5. Logs surface in the Airflow UI
+5. Logs surface in the Airflow UI (via remote logging to s3://airflow-logs/)
 
-NO Iceberg/Lakekeeper integration yet — that's a follow-on DAG
-(bronze_ingest.py or similar) once this baseline is proven.
+Validated end-to-end on 2026-05-22.
 
-Schedule: manual trigger only. Run via the Airflow UI to validate.
+Schedule: manual trigger only.
 """
 
 from __future__ import annotations
@@ -18,7 +17,7 @@ from __future__ import annotations
 import sys
 from datetime import datetime
 
-from airflow.decorators import dag, task
+from airflow.sdk import dag, task
 
 
 @dag(
