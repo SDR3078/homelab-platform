@@ -94,11 +94,13 @@ def iceberg_smoke():
             f"ATTACH '{WAREHOUSE}' AS lake (TYPE iceberg, SECRET lk_iceberg);"
         )
 
-        # Create or replace the test table + insert 5 rows.
-        # CREATE OR REPLACE is idempotent across DAG runs.
+        # DuckDB-Iceberg doesn't support CREATE OR REPLACE — must drop +
+        # create as separate statements. DROP IF EXISTS keeps the DAG
+        # idempotent across runs.
+        con.execute(f"DROP TABLE IF EXISTS lake.{namespace}.{TABLE};")
         con.execute(
             f"""
-            CREATE OR REPLACE TABLE lake.{namespace}.{TABLE} AS
+            CREATE TABLE lake.{namespace}.{TABLE} AS
             SELECT * FROM (VALUES
                 (1, 'alice',   100),
                 (2, 'bob',     200),
