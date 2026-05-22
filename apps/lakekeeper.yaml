@@ -1,0 +1,228 @@
+# lakekeeper — Iceberg REST Catalog (Lakekeeper 0.12.2)
+#
+# Deploys lakekeeper/lakekeeper (Helm chart 0.11.0, app v0.12.2) as the
+# platform's Iceberg catalog. Rust-based, distroless, lean (~50-150Mi
+# at runtime — chosen over Apache Polaris which is JVM-based at
+# ~500-700Mi).
+#
+# Backend metadata store: postgres-data-platform's 'lakekeeper' logical
+# DB (CNPG-managed). Object storage for actual table data: MinIO bucket
+# 'iceberg-warehouse' (provisioned in session 3). The catalog itself does
+# NOT consume S3 credentials at install time; warehouse-S3 credentials
+# are POSTed to Lakekeeper's REST API at warehouse-creation time
+# (post-deploy validation in session 9), where Lakekeeper encrypts them
+# with the encryption key and stores them in Postgres.
+#
+# Three install-time secrets, all materialized in the lakekeeper ns by
+# apps/lakekeeper-bootstrap.yaml (wave 0):
+#   - lakekeeper-credentials       (DB user/password — reflected from
+#                                   data-platform via reflector annotations
+#                                   on the sealed source; chart's
+#                                   externalDatabase block overrides the
+#                                   default key paths to match the
+#                                   CNPG-shape username/password keys)
+#   - lakekeeper-encryption-key    (at-rest encryption for catalog-stored
+#                                   secrets — pre-created sealed because
+#                                   the chart's helm-lookup auto-gen path
+#                                   is incompatible with ArgoCD rendering)
+#   - lakekeeper-s3-credentials    (MinIO svcacct keys for the
+#                                   iceberg-warehouse bucket — sealed
+#                                   here for declarative reproducibility
+#                                   but NOT consumed by the chart;
+#                                   used post-deploy via the API)
+#
+# Sync-wave 1 — runs after apps/lakekeeper-bootstrap.yaml (wave 0). On
+# clean rebuild a brief CreateContainerConfigError on the first pod
+# schedule is expected and self-heals once the sealed/reflected secrets
+# decrypt.
+#
+# ────────────────────────────────────────────────────────────────────────
+# Architecture choices
+# ────────────────────────────────────────────────────────────────────────
+# - Edition: Lakekeeper Core (open-source). Plus requires a license key.
+# - Authz backend: "allowall" — no RBAC enforcement. Internal-LAN-only
+#   deployment at lakekeeper.lab.batzbak.top; matches the auth posture
+#   we use for mlflow + airflow. OpenFGA (the chart's other supported
+#   backend) would add a ~500Mi JVM-equivalent pod; deferred.
+# - OAuth2 auth: disabled (providerUri: ""). No OIDC IdP today.
+# - PSA restricted: chart's catalog image is Rust + distroless nonroot
+#   (uid 65532, gid 65534 — "nonroot" of Google's distroless). Container
+#   runAsUser/runAsGroup are NOT settable via containerSecurityContext —
+#   the chart pulls them from catalog.image.uid/gid. Only the seccomp/
+#   runAsNonRoot/capabilities/allowPrivilegeEscalation bits need explicit
+#   override.
+# - helmWait: true — disables the chart's Helm-hook annotations on the
+#   db-migration Job. Avoids ArgoCD's Helm-hook translation dropping
+#   the Job from sync (the Airflow trap from session 8). ArgoCD's own
+#   hook annotation (argocd.argoproj.io/hook: Sync) remains baked into
+#   the template — the Job is treated as an ArgoCD sync hook and runs
+#   in-phase. There is no values knob to disable that annotation; if
+#   it causes issues we'd patch the chart or use kustomize.
+# - Migration Job + check-db init container resource limits: chart
+#   defaults are {} (no limits), which surprises under PSA-restricted +
+#   tight node memory. Set explicitly per the platform-engineer
+#   pre-review.
+# - Postgres subchart disabled. We have CNPG.
+#
+# Bootstrap procedure (from-scratch deploy onto the platform): see
+# docs/rebuild.md lakekeeper section (added in the commit that adds this
+# Application).
+#
+# Post-deploy validation (next session): spawn a one-off pyiceberg pod,
+# create a warehouse via Lakekeeper's REST API with the sealed
+# lakekeeper-s3-credentials baked into the request, create namespace +
+# small test table, read it back.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: lakekeeper
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://lakekeeper.github.io/lakekeeper-charts
+    chart: lakekeeper
+    targetRevision: 0.11.0
+    helm:
+      releaseName: lakekeeper
+      values: |
+        # Disable the chart's Helm-hook annotations on the db-migration Job.
+        # See header comment — avoids the ArgoCD-hook-translation drop trap
+        # from Airflow session 8. The Job still runs (ArgoCD-hook annotation
+        # makes it a sync-phase hook); just not via Helm hooks.
+        helmWait: true
+
+        lakekeeper:
+          edition: "core"
+
+        # Catalog secrets encrypted at rest in Postgres with this key.
+        # Sealed in charts/lakekeeper/lakekeeper-encryption-key-sealed.yaml.
+        # NEVER rotate.
+        secretBackend:
+          type: "Postgres"
+          postgres:
+            encryptionKeySecret: lakekeeper-encryption-key
+            encryptionKeySecretKey: encryptionKey
+
+        # Disable the chart's bundled groundhog2k/postgres subchart.
+        # Our metadata DB is postgres-data-platform/lakekeeper (CNPG-managed).
+        postgresql:
+          enabled: false
+
+        # External Postgres connection.
+        # The 'lakekeeper-credentials' Secret in this namespace is reflected
+        # from data-platform via reflector annotations on the sealed source.
+        # CNPG creates secrets with keys username/password — we override
+        # the chart's defaults (postgresql-user/postgresql-password) to
+        # match.
+        externalDatabase:
+          type: postgres
+          host_read: postgres-data-platform-rw.data-platform.svc.cluster.local
+          host_write: postgres-data-platform-rw.data-platform.svc.cluster.local
+          port: 5432
+          database: lakekeeper
+          userSecret: lakekeeper-credentials
+          userSecretKey: username
+          passwordSecret: lakekeeper-credentials
+          passwordSecretKey: password
+
+        # OIDC auth disabled. TODO when an external IdP lands: set
+        # auth.oauth2.providerUri to the IdP's well-known URL, plus the
+        # audience/clientID for the catalog. Internal-LAN-only today.
+        auth:
+          oauth2:
+            providerUri: ""
+
+        # No RBAC enforcement. OpenFGA backend is supported by the chart
+        # but adds significant operational surface; revisit if Lakekeeper
+        # exposure goes beyond internal LAN or multi-tenant requirements
+        # appear. authz backend cannot change after bootstrap; this is a
+        # one-way door, so picked the simplest "internal-only" posture.
+        authz:
+          backend: "allowall"
+        internalOpenFGA: false
+
+        catalog:
+          replicas: 1
+
+          # Lakekeeper catalog is Rust + distroless — lean at idle.
+          # Bump if warehouse count grows and per-request workload picks up.
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+
+          # PSA restricted compliance.
+          # NOTE: runAsUser/runAsGroup are NOT settable via
+          # containerSecurityContext for this chart — the chart's template
+          # pulls them from catalog.image.uid/gid (defaults: 65532/65534,
+          # which is the distroless 'nonroot' identity). Setting them here
+          # would be a no-op or fail chart validation.
+          podSecurityContext:
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          containerSecurityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+
+          # db-migration Job — runs once on install + on each chart upgrade.
+          # Pre-set resource limits (chart default is {} = unbounded).
+          # Same securityContext as the catalog (the migration Job's template
+          # references catalog.podSecurityContext).
+          dbMigrations:
+            enabled: true
+            resources:
+              requests:
+                cpu: 100m
+                memory: 256Mi
+              limits:
+                memory: 512Mi
+
+          # check-db init container — small Postgres reachability check.
+          initContainers:
+            checkDb:
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  memory: 128Mi
+
+          ingress:
+            enabled: true
+            ingressClassName: nginx
+            host: lakekeeper.lab.batzbak.top
+            path: "/"
+            tls:
+              enabled: true
+              secretName: wildcard-lab-tls
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: lakekeeper
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
