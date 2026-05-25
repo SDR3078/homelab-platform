@@ -139,6 +139,12 @@ def insurance_retention_bronze_ingest():
         df["_source_uri"] = LANDING_URI
         df["_content_sha256"] = content_sha
 
+        # Iceberg timestamps are microsecond precision; pandas datetimes are ns
+        # (Birth_date, _ingested_at), which PyIceberg rejects on write. Downcast ns->us.
+        for col in df.columns:
+            if pd.api.types.is_datetime64_any_dtype(df[col]):
+                df[col] = df[col].dt.as_unit("us")
+
         arrow = pa.Table.from_pandas(df, preserve_index=False)
 
         # 5. Create namespaces (parent + child) if needed; OVERWRITE the data
