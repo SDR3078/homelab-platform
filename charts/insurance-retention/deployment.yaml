@@ -1,0 +1,103 @@
+# insurance-retention serving Deployment
+#
+# Long-running FastAPI service (the train/serve image, default uvicorn CMD).
+# At startup it loads the three @production component models + the bundle's
+# median_fill_values.json from MLflow/MinIO (lifespan), so /health returns 503
+# until loaded — the startupProbe waits that out before traffic flows.
+#
+# Image: ghcr.io/sdr3078/insurance-retention:latest (public). Pinned-by-SHA via
+# ArgoCD Image Updater is the planned next step; until then imagePullPolicy:
+# Always picks up new :latest pushes on pod restart.
+#
+# Reloader annotation rolls the pod automatically when the sealed S3 secret is
+# resealed (stakater/reloader is installed cluster-wide).
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: insurance-retention
+  namespace: insurance-retention
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    secret.reloader.stakater.com/reload: "insurance-retention-s3-credentials"
+  labels:
+    app.kubernetes.io/name: insurance-retention
+    app.kubernetes.io/component: serving
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: insurance-retention
+      app.kubernetes.io/component: serving
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: insurance-retention
+        app.kubernetes.io/component: serving
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: serve
+          image: ghcr.io/sdr3078/insurance-retention:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            runAsNonRoot: true
+            readOnlyRootFilesystem: false   # mlflow/boto3 write to /tmp during artifact download
+          env:
+            - name: MLFLOW_TRACKING_URI
+              value: http://mlflow.mlflow.svc.cluster.local
+            - name: MLFLOW_S3_ENDPOINT_URL
+              value: https://minio.data-platform.svc.cluster.local
+            - name: AWS_CA_BUNDLE
+              value: /etc/ssl/k3s/ca.crt
+            - name: HOME
+              value: /home/appuser
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: insurance-retention-s3-credentials
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: insurance-retention-s3-credentials
+                  key: AWS_SECRET_ACCESS_KEY
+          volumeMounts:
+            - name: cluster-ca
+              mountPath: /etc/ssl/k3s/ca.crt
+              subPath: ca.crt
+              readOnly: true
+          startupProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 36            # up to ~3 min to load the bundle
+          readinessProbe:
+            httpGet: { path: /health, port: 8000 }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: 8000 }
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+      volumes:
+        - name: cluster-ca
+          configMap:
+            name: kube-root-ca.crt

@@ -1,0 +1,55 @@
+# insurance-retention — sync serving for the MLOps showcase
+#
+# The FastAPI service that loads the @production model bundle from the cluster
+# MLflow and serves /predict + /select at insurance-retention.lab.batzbak.top.
+# Training is NOT deployed here — it runs as an ephemeral Job/DAG that registers
+# to MLflow; this Application owns only the long-running serving workload.
+#
+# Single Application (no bootstrap split): all resources are raw manifests in
+# one in-repo path, so ordering is handled by per-resource sync-wave annotations
+# (Namespace + SealedSecret at wave 0; Deployment/Service/Ingress at wave 1)
+# rather than by a second Application. The mlflow/wedding-site bootstrap split
+# exists because their workloads come from a *separate* chart source that must
+# be ordered after their in-repo glue — not the case here.
+#
+# Image lifecycle: ghcr.io/sdr3078/insurance-retention:latest, built + pushed by
+# the workload repo's CI. ArgoCD Image Updater (planned) will pin + bump the SHA.
+#
+# Bootstrap procedure (from-scratch): the Namespace + SealedSecret materialize
+# at wave 0 (sealed-secrets controller decrypts insurance-retention-s3-credentials;
+# reflector mirrors wildcard-lab-tls once the ns exists and the cert's reflection
+# lists include it); the Deployment at wave 1 then starts and loads @production.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: insurance-retention
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/SDR3078/homelab-platform.git
+    targetRevision: main
+    path: charts/insurance-retention
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: insurance-retention
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

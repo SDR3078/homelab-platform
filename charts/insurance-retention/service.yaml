@@ -1,0 +1,20 @@
+# ClusterIP fronting the serving pods; the Ingress routes to this.
+apiVersion: v1
+kind: Service
+metadata:
+  name: insurance-retention
+  namespace: insurance-retention
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  labels:
+    app.kubernetes.io/name: insurance-retention
+    app.kubernetes.io/component: serving
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: insurance-retention
+    app.kubernetes.io/component: serving
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8000

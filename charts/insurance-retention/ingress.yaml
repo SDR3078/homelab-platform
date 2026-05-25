@@ -1,0 +1,38 @@
+# Public (LAN) endpoint for the serving API at insurance-retention.lab.batzbak.top.
+# TLS terminates at ingress-nginx using the wildcard cert (wildcard-lab-tls),
+# reflected into this namespace by cert-manager — requires appending
+# 'insurance-retention' to the reflection lists in
+# charts/cert-manager/certificate-wildcard.yaml.
+#
+# proxy-body-size is bumped so a /predict or /select batch of raw records is
+# never rejected; read/send timeouts cover a slow first request while the pod
+# is still warming (though the startupProbe should gate that).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: insurance-retention
+  namespace: insurance-retention
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    nginx.ingress.kubernetes.io/proxy-body-size: "8m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "30"
+  labels:
+    app.kubernetes.io/name: insurance-retention
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - insurance-retention.lab.batzbak.top
+      secretName: wildcard-lab-tls
+  rules:
+    - host: insurance-retention.lab.batzbak.top
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: insurance-retention
+                port:
+                  number: 80

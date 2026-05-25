@@ -1,0 +1,34 @@
+# insurance-retention namespace — sync-synchronous serving for the MLOps showcase
+#
+# Houses the FastAPI service that loads the @production model bundle from the
+# cluster MLflow (mlflow.mlflow.svc) and its artifacts from MinIO
+# (minio.data-platform.svc, bucket mlflow-artifacts) and serves /predict +
+# /select. Training is NOT here — it runs as an ephemeral Job/DAG that registers
+# to MLflow; this namespace holds only the long-running serving Deployment.
+#
+# Cross-namespace dependencies (mirrors the mlflow namespace's shape):
+#   - mlflow.mlflow.svc.cluster.local:80          (model registry / tracking)
+#   - minio.data-platform.svc.cluster.local (HTTPS, cluster-CA-signed)
+#       artifact download; auth via insurance-retention-s3-credentials (this
+#       directory) — a copy of the mlflow-artifacts MinIO svcacct. CA for TLS
+#       mounted from the auto-injected kube-root-ca.crt ConfigMap.
+#   - wildcard-lab-tls reflected in from cert-manager (append this namespace to
+#       charts/cert-manager/certificate-wildcard.yaml's reflection lists).
+#
+# PodSecurity 'restricted' is enforced; the serving image runs as uid 1001,
+# drops ALL capabilities, no privilege escalation, seccomp RuntimeDefault.
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: insurance-retention
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  labels:
+    app.kubernetes.io/name: insurance-retention
+    app.kubernetes.io/part-of: homelab-platform
+    app.kubernetes.io/managed-by: argocd
+
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
