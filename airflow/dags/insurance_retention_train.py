@@ -11,8 +11,11 @@ MinIO artifacts); it does NOT promote it. Promotion stays a separate, gated step
 (promote_bundle.py), so a retrain never auto-ships to production -- the clean
 CT-vs-promotion split.
 
-Schedule: manual (schedule=None) for now; flip to a cron / data-sensor once the
-Iceberg bronze ingest is wired (Workstream D).
+Triggers: manual (schedule=None here), or automatically by the
+insurance_retention_image_sensor DAG, which fires this one with an immutable
+image digest in dag_run.conf['image'] whenever CI publishes a new build
+(code-driven CT). A data-driven trigger follows once the Iceberg bronze ingest
+lands (Workstream D). Promotion stays the separate gated step regardless.
 
 Pod wiring (mirrors the proven Job):
   - MLFLOW_TRACKING_URI -> in-cluster MLflow Service
@@ -32,7 +35,12 @@ from airflow.providers.cncf.kubernetes.operators.pod import KubernetesPodOperato
 from airflow.providers.cncf.kubernetes.secret import Secret
 from kubernetes.client import models as k8s
 
+# Default image for manual / ad-hoc runs. The code-driven CT trigger
+# (insurance_retention_image_sensor) overrides this with an immutable digest via
+# dag_run.conf['image'], so an automated retrain runs the exact build CI produced
+# and the candidate bundle is stamped with that ref (lineage in train.py).
 IMAGE = "ghcr.io/sdr3078/insurance-retention:latest"
+_IMAGE = "{{ dag_run.conf.get('image', '" + IMAGE + "') }}"
 
 
 @dag(
@@ -48,7 +56,7 @@ def insurance_retention_train():
         task_id="train_and_register",
         name="insurance-retention-train",
         namespace="airflow",
-        image=IMAGE,
+        image=_IMAGE,
         image_pull_policy="Always",
         cmds=["python", "/app/training/train.py"],
         arguments=["--register", "--experiment-name", "insurance-retention"],
@@ -57,6 +65,7 @@ def insurance_retention_train():
             "MLFLOW_S3_ENDPOINT_URL": "https://minio.data-platform.svc.cluster.local",
             "AWS_CA_BUNDLE": "/etc/ssl/k3s/ca.crt",
             "HOME": "/home/appuser",
+            "IR_IMAGE_REF": _IMAGE,  # lineage: the exact image this run executed
         },
         secrets=[
             Secret("env", "AWS_ACCESS_KEY_ID", "insurance-retention-s3-credentials", "AWS_ACCESS_KEY_ID"),
