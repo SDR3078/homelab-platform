@@ -155,9 +155,15 @@ spec:
             value: "30"
           - name: AIRFLOW__SCHEDULER__SCHEDULER_HEALTH_CHECK_THRESHOLD
             value: "90"
-          - name: AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL
+          # Airflow 3 moved DAG parsing out of [scheduler] into [dag_processor],
+          # so these MUST be AIRFLOW__DAG_PROCESSOR__*. The old SCHEDULER vars were
+          # silently ignored: the dag-processor fell back to the 30s default and
+          # re-parsed every file every 30s (~200m+ CPU, since each parse loads the
+          # kubernetes client for the KubernetesPodOperator DAG). REFRESH_INTERVAL
+          # is the Airflow-3 name for the deprecated dag_dir_list_interval.
+          - name: AIRFLOW__DAG_PROCESSOR__MIN_FILE_PROCESS_INTERVAL
             value: "300"
-          - name: AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL
+          - name: AIRFLOW__DAG_PROCESSOR__REFRESH_INTERVAL
             value: "600"
           - name: AIRFLOW__TRIGGERER__JOB_HEARTBEAT_SEC
             value: "30"
