@@ -48,6 +48,9 @@ _IMAGE = "{{ dag_run.conf.get('image', '" + IMAGE + "') }}"
     start_date=datetime(2026, 5, 25),
     schedule=None,
     catchup=False,
+    # Active on creation: the sensor triggers this DAG, and a paused DAG's
+    # triggered runs sit queued forever instead of executing.
+    is_paused_upon_creation=False,
     tags=["insurance-retention", "ml", "training"],
     doc_md=__doc__,
 )

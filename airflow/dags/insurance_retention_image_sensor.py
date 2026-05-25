@@ -68,6 +68,9 @@ def _resolve_latest_digest() -> str:
     schedule="*/15 * * * *",
     catchup=False,
     max_active_runs=1,
+    # Active on creation: a cron-driven sensor is useless while paused, and new
+    # DAGs are paused by default. Without this a fresh deploy silently never fires.
+    is_paused_upon_creation=False,
     tags=["insurance-retention", "ml", "ct-trigger"],
     doc_md=__doc__,
 )
