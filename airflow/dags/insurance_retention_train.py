@@ -5,14 +5,16 @@ Airflow image has no lightgbm / mlflow / features-wheel). Instead a
 KubernetesPodOperator launches the purpose-built train/serve image
 (ghcr.io/sdr3078/insurance-retention) which runs `train.py --register`.
 
-Trigger: data-aware scheduling on the `insurance_retention_image` Asset. The
-`insurance_retention_image_sensor` DAG updates that Asset when CI publishes a new
-image, so Airflow runs this DAG automatically (the image -> training edge is
-visible in the Asset/lineage graph). `resolve_image` chooses what to run:
-`dag_run.conf['image']` for a manual run, else the `ir_target_image` Variable the
-sensor set, else `:latest`. The chosen ref is passed to the pod as IR_IMAGE_REF so
-train.py stamps it into the bundle for lineage. A data-driven trigger (Iceberg
-bronze ingest, Workstream D) can later update the same/another Asset.
+Trigger: data-aware scheduling on TWO Assets -- the CT trigger fires on new CODE or
+new DATA. `insurance_retention_image_sensor` updates the `insurance_retention_image`
+Asset when CI publishes a new image; `insurance_retention_bronze_ingest` updates the
+`insurance_retention_bronze` Asset when new training data lands. Either edge runs this
+DAG automatically (both are visible in the Asset/lineage graph; `|` = OR, see schedule).
+`resolve_image` picks the image (`dag_run.conf['image']`, else the `ir_target_image`
+Variable the sensor set, else `:latest`); `resolve_data_snapshot` picks the bronze
+snapshot to PIN (`dag_run.conf['snapshot_id']`, else the `ir_bronze_snapshot_id`
+Variable the bronze DAG published). Both reach the pod (IR_IMAGE_REF +
+IR_DATA_SNAPSHOT_ID) so train.py stamps the full code+image+data lineage triangle.
 
 It REGISTERS a new bundle version on the cluster MLflow (Postgres metadata +
 MinIO artifacts); it does NOT promote it. Promotion stays a separate, gated step
@@ -23,6 +25,8 @@ Pod wiring (mirrors the proven Job):
   - MLFLOW_TRACKING_URI -> in-cluster MLflow Service
   - MinIO creds via the sealed 'insurance-retention-s3-credentials' (this ns) +
     MLFLOW_S3_ENDPOINT_URL + AWS_CA_BUNDLE (cluster CA from kube-root-ca.crt)
+  - Lakehouse read creds via 'lakekeeper-s3-credentials' (LAKE_S3_*), for the
+    Iceberg bronze.train read at the pinned snapshot
   - PSA 'restricted'-compliant securityContext (non-root uid 1001, drop ALL, seccomp)
 The KPO pod runs in the 'airflow' namespace, where the chart's
 airflow-pod-launcher-role already grants pod-create RBAC.
@@ -40,16 +44,20 @@ from kubernetes.client import models as k8s
 # Default image for manual / ad-hoc runs when no target has been resolved.
 IMAGE = "ghcr.io/sdr3078/insurance-retention:latest"
 
-# Consumed Asset -- must match the producer in insurance_retention_image_sensor.py
-# (Airflow keys assets by name + uri).
+# Consumed Assets -- must match the producers (Airflow keys assets by name + uri).
+#   image:  insurance_retention_image_sensor.py
+#   bronze: insurance_retention_bronze_ingest.py
 IMAGE_ASSET = Asset(name="insurance_retention_image", uri="ghcr://sdr3078/insurance-retention:latest")
+BRONZE_ASSET = Asset(name="insurance_retention_bronze", uri="iceberg://demo/insurance_retention.bronze.train")
 
 
 @dag(
     dag_id="insurance_retention_train",
     start_date=datetime(2026, 5, 25),
-    # Data-aware: runs when the image Asset is updated by the sensor.
-    schedule=[IMAGE_ASSET],
+    # Data-aware CT trigger: retrain on NEW CODE (image Asset, set by the sensor) OR
+    # NEW DATA (bronze Asset, set by the bronze-ingest DAG). `|` = AssetAny (OR); a
+    # plain list [A, B] would be AssetAll (AND -- wait for BOTH), which is not wanted.
+    schedule=IMAGE_ASSET | BRONZE_ASSET,
     catchup=False,
     # Active on creation: an Asset-scheduled (or triggered) DAG that is paused
     # never runs its triggered/scheduled runs -- they sit queued.
@@ -66,7 +74,19 @@ def insurance_retention_train():
         conf = (dag_run.conf or {}) if dag_run is not None else {}
         return conf.get("image") or Variable.get("ir_target_image", default=IMAGE)
 
+    @task
+    def resolve_data_snapshot() -> str:
+        """Pick the bronze snapshot id to PIN: manual conf override, else the snapshot
+        the bronze-ingest DAG last published (ir_bronze_snapshot_id Variable), else
+        'unknown' (train.py then reads the current snapshot, logged loudly). Works for
+        both trigger types -- the Variable always holds the latest landed bronze snapshot."""
+        ctx = get_current_context()
+        dag_run = ctx.get("dag_run")
+        conf = (dag_run.conf or {}) if dag_run is not None else {}
+        return str(conf.get("snapshot_id") or Variable.get("ir_bronze_snapshot_id", default="unknown"))
+
     image = resolve_image()
+    snapshot = resolve_data_snapshot()
 
     train = KubernetesPodOperator(
         task_id="train_and_register",
@@ -81,11 +101,18 @@ def insurance_retention_train():
             "MLFLOW_S3_ENDPOINT_URL": "https://minio.data-platform.svc.cluster.local",
             "AWS_CA_BUNDLE": "/etc/ssl/k3s/ca.crt",
             "HOME": "/home/appuser",
-            "IR_IMAGE_REF": "{{ ti.xcom_pull(task_ids='resolve_image') }}",  # lineage
+            "IR_IMAGE_REF": "{{ ti.xcom_pull(task_ids='resolve_image') }}",  # lineage: code+image
+            "IR_DATA_SNAPSHOT_ID": "{{ ti.xcom_pull(task_ids='resolve_data_snapshot') }}",  # lineage: data leg
         },
         secrets=[
+            # MLflow artifact store (MinIO) -- model upload/download.
             Secret("env", "AWS_ACCESS_KEY_ID", "insurance-retention-s3-credentials", "AWS_ACCESS_KEY_ID"),
             Secret("env", "AWS_SECRET_ACCESS_KEY", "insurance-retention-s3-credentials", "AWS_SECRET_ACCESS_KEY"),
+            # Lakehouse read (Iceberg data files in iceberg-warehouse) -- the purpose-built
+            # lakekeeper svcacct; train.py's _build_catalog prefers LAKE_S3_* over AWS_*.
+            # Injected into THIS pod only (serving's Deployment is a separate spec).
+            Secret("env", "LAKE_S3_ACCESS_KEY_ID", "lakekeeper-s3-credentials", "AWS_ACCESS_KEY_ID"),
+            Secret("env", "LAKE_S3_SECRET_ACCESS_KEY", "lakekeeper-s3-credentials", "AWS_SECRET_ACCESS_KEY"),
         ],
         volumes=[
             k8s.V1Volume(
@@ -123,7 +150,7 @@ def insurance_retention_train():
         startup_timeout_seconds=300,
     )
 
-    image >> train
+    [image, snapshot] >> train
 
 
 insurance_retention_train()
