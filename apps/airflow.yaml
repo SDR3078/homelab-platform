@@ -357,12 +357,17 @@ spec:
         dagProcessor:
           enabled: true
           replicas: 1
+          # 1Gi limit: the dag-processor forks a subprocess per DAG file to parse,
+          # and insurance_retention_train.py imports the kubernetes client +
+          # cncf.kubernetes provider at module level (for KubernetesPodOperator),
+          # heavy to load every parse. The old 512Mi cap OOMKilled it (exit 137)
+          # in a restart loop (airflow app stuck Progressing). Requests -> 512Mi.
           resources:
             requests:
               cpu: 50m
-              memory: 256Mi
-            limits:
               memory: 512Mi
+            limits:
+              memory: 1Gi
           livenessProbe:
             initialDelaySeconds: 30
             timeoutSeconds: 60
