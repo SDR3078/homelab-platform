@@ -251,12 +251,19 @@ spec:
         apiServer:
           enabled: true
           replicas: 1
+          # 1Gi limit: apiServer serves the Execution API that every
+          # KubernetesExecutor worker calls for heartbeats + terminal state
+          # reporting. Idle is ~370Mi, but the burst when a task reports
+          # completion (state update + get_logs streaming) OOMKilled the
+          # previous 512Mi cap, which failed an otherwise-successful task (the
+          # worker could not report its success). Requests raised to 512Mi to
+          # match real idle so the scheduler reserves enough.
           resources:
             requests:
               cpu: 100m
-              memory: 256Mi
-            limits:
               memory: 512Mi
+            limits:
+              memory: 1Gi
 
         # webserver (Airflow 2.x legacy): explicitly disabled — apiServer
         # serves the UI in 3.x.
