@@ -49,8 +49,8 @@ To be populated as sessions progress:
 - [x] insurance-retention MLOps showcase (2026-05-24/25): first real ML
       workload. A 3-model decision bundle trained by an Airflow DAG
       (KubernetesPodOperator) that a GHCR image-sensor auto-triggers on each new
-      build (code-driven CT, with image+commit lineage), versioned and
-      gated-promoted in the MLflow
+      build via a data-aware Asset (code-driven CT, with image+commit lineage),
+      versioned and gated-promoted in the MLflow
       registry, and served by an ArgoCD-managed FastAPI Deployment at
       https://insurance-retention.lab.batzbak.top. Chart in
       `charts/insurance-retention/`, DAG in `airflow/dags/`, recreation in
