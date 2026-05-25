@@ -1,18 +1,22 @@
-"""insurance_retention_image_sensor -- code-driven CT trigger.
+"""insurance_retention_image_sensor -- code-driven CT trigger via an Airflow Asset.
 
 Polls GHCR for the digest behind insurance-retention:latest. When it changes (CI
-published a new training-relevant build), this fires insurance_retention_train on
-that *immutable digest* -- so the run is reproducible and the candidate bundle is
-stamped with the exact image + commit that produced it (lineage). Promotion stays
-the separate gated step; a retrain only ever registers a candidate.
+published a new training-relevant build), it records the new digest ref in the
+Airflow Variable `ir_target_image` and UPDATES the Asset `insurance_retention_image`.
+The training DAG is scheduled on that Asset (`schedule=[Asset]`), so Airflow triggers
+it automatically -- data-aware scheduling. The image -> training dependency then
+shows up in Airflow's Asset/lineage graph instead of an imperative
+TriggerDagRunOperator.
 
-Why poll instead of a webhook / CI push: the GHCR package is public, so the digest
-is readable anonymously -- no registry token, no inbound webhook, no cross-repo CI
-credential (the same no-external-token stance as ArgoCD Image Updater on the
-serving side). Training is not latency-sensitive, so a 15-minute poll is plenty.
-
-State: the last-trained digest lives in the Airflow Variable 'ir_last_trained_image',
-advanced only after a triggered run SUCCEEDS, so a failed retrain re-fires next poll.
+Design notes:
+- The digest rides in the `ir_target_image` Variable (read by the training DAG's
+  resolve_image task), not the asset-event extra -- robust templating, no fragile
+  context plumbing. The Asset update is purely the trigger signal.
+- Watermark `ir_last_trained_image` is advanced on DETECTION (fire once per new
+  digest). A failed retrain is re-fired by re-triggering, not automatically -- an
+  acceptable trade given promotion is gated.
+- Anonymous registry read (public package, no token). Active on creation
+  (is_paused_upon_creation=False) so it actually polls on a fresh deploy.
 """
 
 from __future__ import annotations
@@ -21,15 +25,19 @@ import json
 import urllib.request
 from datetime import datetime
 
-from airflow.sdk import dag, task, Variable
+from airflow.sdk import dag, task, Variable, Asset
 from airflow.sdk.exceptions import AirflowSkipException
-from airflow.providers.standard.operators.trigger_dagrun import TriggerDagRunOperator
 
 REGISTRY = "ghcr.io"
 REPO = "sdr3078/insurance-retention"
 IMAGE = f"{REGISTRY}/{REPO}"
 TAG = "latest"
 VAR_LAST_TRAINED = "ir_last_trained_image"
+VAR_TARGET_IMAGE = "ir_target_image"
+
+# The Asset the training DAG is scheduled on. Keyed by name + uri -- the training
+# DAG declares an identical Asset(...) to consume it.
+IMAGE_ASSET = Asset(name="insurance_retention_image", uri=f"ghcr://{REPO}:{TAG}")
 
 # Accept manifest-index + single-manifest media types so HEAD returns a digest
 # whether the tag is a multi-arch index or a single image.
@@ -75,33 +83,18 @@ def _resolve_latest_digest() -> str:
     doc_md=__doc__,
 )
 def insurance_retention_image_sensor():
-    @task
-    def detect_new_image() -> str:
-        """Return the latest digest, or skip the run if it is already trained."""
+    @task(outlets=[IMAGE_ASSET])
+    def detect_and_signal() -> str:
+        """On a new digest: record the ref + advance the watermark; success updates
+        the Asset, which triggers the training DAG. Skip if nothing new."""
         digest = _resolve_latest_digest()
         if digest == Variable.get(VAR_LAST_TRAINED, default=""):
             raise AirflowSkipException(f"No new image; already trained {digest}")
+        Variable.set(VAR_TARGET_IMAGE, f"{IMAGE}@{digest}")
+        Variable.set(VAR_LAST_TRAINED, digest)
         return digest
 
-    digest = detect_new_image()
-
-    # conf is a templated field: the {{ }} renders the digest pushed by detect.
-    trigger = TriggerDagRunOperator(
-        task_id="trigger_training",
-        trigger_dag_id="insurance_retention_train",
-        conf={"image": IMAGE + "@{{ ti.xcom_pull(task_ids='detect_new_image') }}"},
-        wait_for_completion=True,
-        poke_interval=30,
-        allowed_states=["success"],
-        failed_states=["failed"],
-    )
-
-    @task
-    def mark_trained(digest: str) -> None:
-        """Advance the watermark only after training succeeded."""
-        Variable.set(VAR_LAST_TRAINED, digest)
-
-    digest >> trigger >> mark_trained(digest)
+    detect_and_signal()
 
 
 insurance_retention_image_sensor()

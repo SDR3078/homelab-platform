@@ -3,19 +3,21 @@
 Orchestration only: this DAG does NOT run the ML code in an Airflow worker (the
 Airflow image has no lightgbm / mlflow / features-wheel). Instead a
 KubernetesPodOperator launches the purpose-built train/serve image
-(ghcr.io/sdr3078/insurance-retention) which runs `train.py --register` -- the
-same pod spec the earlier one-off verification Job proved.
+(ghcr.io/sdr3078/insurance-retention) which runs `train.py --register`.
+
+Trigger: data-aware scheduling on the `insurance_retention_image` Asset. The
+`insurance_retention_image_sensor` DAG updates that Asset when CI publishes a new
+image, so Airflow runs this DAG automatically (the image -> training edge is
+visible in the Asset/lineage graph). `resolve_image` chooses what to run:
+`dag_run.conf['image']` for a manual run, else the `ir_target_image` Variable the
+sensor set, else `:latest`. The chosen ref is passed to the pod as IR_IMAGE_REF so
+train.py stamps it into the bundle for lineage. A data-driven trigger (Iceberg
+bronze ingest, Workstream D) can later update the same/another Asset.
 
 It REGISTERS a new bundle version on the cluster MLflow (Postgres metadata +
 MinIO artifacts); it does NOT promote it. Promotion stays a separate, gated step
 (promote_bundle.py), so a retrain never auto-ships to production -- the clean
 CT-vs-promotion split.
-
-Triggers: manual (schedule=None here), or automatically by the
-insurance_retention_image_sensor DAG, which fires this one with an immutable
-image digest in dag_run.conf['image'] whenever CI publishes a new build
-(code-driven CT). A data-driven trigger follows once the Iceberg bronze ingest
-lands (Workstream D). Promotion stays the separate gated step regardless.
 
 Pod wiring (mirrors the proven Job):
   - MLFLOW_TRACKING_URI -> in-cluster MLflow Service
@@ -30,36 +32,47 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from airflow.sdk import dag
+from airflow.sdk import dag, task, Variable, Asset, get_current_context
 from airflow.providers.cncf.kubernetes.operators.pod import KubernetesPodOperator
 from airflow.providers.cncf.kubernetes.secret import Secret
 from kubernetes.client import models as k8s
 
-# Default image for manual / ad-hoc runs. The code-driven CT trigger
-# (insurance_retention_image_sensor) overrides this with an immutable digest via
-# dag_run.conf['image'], so an automated retrain runs the exact build CI produced
-# and the candidate bundle is stamped with that ref (lineage in train.py).
+# Default image for manual / ad-hoc runs when no target has been resolved.
 IMAGE = "ghcr.io/sdr3078/insurance-retention:latest"
-_IMAGE = "{{ dag_run.conf.get('image', '" + IMAGE + "') }}"
+
+# Consumed Asset -- must match the producer in insurance_retention_image_sensor.py
+# (Airflow keys assets by name + uri).
+IMAGE_ASSET = Asset(name="insurance_retention_image", uri="ghcr://sdr3078/insurance-retention:latest")
 
 
 @dag(
     dag_id="insurance_retention_train",
     start_date=datetime(2026, 5, 25),
-    schedule=None,
+    # Data-aware: runs when the image Asset is updated by the sensor.
+    schedule=[IMAGE_ASSET],
     catchup=False,
-    # Active on creation: the sensor triggers this DAG, and a paused DAG's
-    # triggered runs sit queued forever instead of executing.
+    # Active on creation: an Asset-scheduled (or triggered) DAG that is paused
+    # never runs its triggered/scheduled runs -- they sit queued.
     is_paused_upon_creation=False,
     tags=["insurance-retention", "ml", "training"],
     doc_md=__doc__,
 )
 def insurance_retention_train():
-    KubernetesPodOperator(
+    @task
+    def resolve_image() -> str:
+        """Pick the image to run: manual conf override, else the sensor's target, else :latest."""
+        ctx = get_current_context()
+        dag_run = ctx.get("dag_run")
+        conf = (dag_run.conf or {}) if dag_run is not None else {}
+        return conf.get("image") or Variable.get("ir_target_image", default=IMAGE)
+
+    image = resolve_image()
+
+    train = KubernetesPodOperator(
         task_id="train_and_register",
         name="insurance-retention-train",
         namespace="airflow",
-        image=_IMAGE,
+        image="{{ ti.xcom_pull(task_ids='resolve_image') }}",
         image_pull_policy="Always",
         cmds=["python", "/app/training/train.py"],
         arguments=["--register", "--experiment-name", "insurance-retention"],
@@ -68,7 +81,7 @@ def insurance_retention_train():
             "MLFLOW_S3_ENDPOINT_URL": "https://minio.data-platform.svc.cluster.local",
             "AWS_CA_BUNDLE": "/etc/ssl/k3s/ca.crt",
             "HOME": "/home/appuser",
-            "IR_IMAGE_REF": _IMAGE,  # lineage: the exact image this run executed
+            "IR_IMAGE_REF": "{{ ti.xcom_pull(task_ids='resolve_image') }}",  # lineage
         },
         secrets=[
             Secret("env", "AWS_ACCESS_KEY_ID", "insurance-retention-s3-credentials", "AWS_ACCESS_KEY_ID"),
@@ -109,6 +122,8 @@ def insurance_retention_train():
         on_finish_action="delete_pod",
         startup_timeout_seconds=300,
     )
+
+    image >> train
 
 
 insurance_retention_train()
