@@ -481,11 +481,16 @@ ArgoCD-reconciled sides come up automatically once their dependencies
   `models:/insurance-retention-bundle@production`, a Service, and an Ingress
   at `insurance-retention.lab.batzbak.top`).
 - **Training.** `airflow/dags/insurance_retention_train.py` is git-synced
-  into Airflow (Step 10). A KubernetesPodOperator launches the workload
-  image in the `airflow` namespace to run `train.py --register`. It is
-  `schedule=[Asset("insurance_retention_image")]` (data-aware scheduling), and a
-  `resolve_image` task picks what to run: `dag_run.conf['image']` for a manual
-  run, else the `ir_target_image` Variable, else `:latest`.
+  into Airflow (Step 10). A KubernetesPodOperator launches the (code-only) workload
+  image in the `airflow` namespace to run `train.py --register`, which reads
+  `insurance_retention.bronze.train` from the lakehouse at a pinned snapshot (NOT a
+  baked dataset). It is `schedule = image_asset | bronze_asset` (data-aware, AssetAny
+  = retrain on new code OR new data). Two resolver tasks set the pod env: `resolve_image`
+  (`dag_run.conf['image']` else the `ir_target_image` Variable else `:latest` →
+  `IR_IMAGE_REF`) and `resolve_data_snapshot` (`dag_run.conf['snapshot_id']` else the
+  `ir_bronze_snapshot_id` Variable → `IR_DATA_SNAPSHOT_ID`). The pod also gets `LAKE_S3_*`
+  from `lakekeeper-s3-credentials` (reflected into the `airflow` ns from `lakekeeper`,
+  Step 7c) to read the Iceberg data files.
 - **CT trigger.** `airflow/dags/insurance_retention_image_sensor.py` (cron
   `*/15`) resolves the digest of `insurance-retention:latest` from GHCR
   anonymously (public package, no token), and when it differs from the Airflow
@@ -494,11 +499,41 @@ ArgoCD-reconciled sides come up automatically once their dependencies
   uses to auto-trigger the training DAG (the image -> train edge shows in the
   Asset graph; no TriggerDagRunOperator). The watermark advances on detection
   (fire once per digest). So a new CI image drives an automatic, reproducible
-  retrain; promotion stays gated. `train.py`
-  stamps `image_ref` + `code_sha` into the bundle tags for lineage (the
-  Dockerfile bakes `IR_CODE_SHA` from CI's `github.sha`). Both DAGs set
+  retrain; promotion stays gated. The **data** edge is symmetric:
+  `insurance_retention_bronze_ingest` (see *Data plane (bronze) + first seed* below)
+  updates the `insurance_retention_bronze` Asset when new training data lands, which
+  also auto-triggers the training DAG — so CT fires on new code OR new data. `train.py`
+  stamps `image_ref` + `code_sha` + `data_snapshot_id` into the bundle tags for the full
+  lineage triangle (the Dockerfile bakes `IR_CODE_SHA` from CI's `github.sha`; the
+  snapshot id comes from the bronze DAG). Both DAGs set
   `is_paused_upon_creation=False` so they are active on a fresh deploy (new DAGs
   are otherwise paused by default and would silently never fire).
+
+**Data plane (bronze) + first seed.** Training reads
+`insurance_retention.bronze.train`, so on a fresh lakehouse that table must be seeded
+before the first retrain can register. `airflow/dags/insurance_retention_bronze_ingest.py`
+reads a Parquet from a MinIO **landing zone** and writes the Iceberg table (overwrite +
+content-hash fire-once watermark + DQ gate + provenance) via Lakekeeper, then emits the
+`insurance_retention_bronze` Asset and publishes the snapshot id (`ir_bronze_snapshot_id`).
+The landing object does not survive a MinIO rebuild, so re-seed it once from the example
+data in the workload repo:
+
+```bash
+# From a clone of the insurance-retention workload repo:
+.venv/bin/python -c "import pandas as pd; pd.read_excel('data/df_final.xlsx').to_parquet('/tmp/df_final.parquet')"
+
+# Upload to the landing zone, using the iceberg-warehouse svcacct keys (Step 7c) and
+# the same MinIO port-forward as Step 7. NOTE: the mc alias name MUST start with a letter
+# -- an invalid name (e.g. a leading underscore) makes `mc cp` silently write to a LOCAL
+# path instead of erroring, and `mc ls` will "confirm" that bogus local copy.
+mc alias set lakeseed https://localhost:9000 "$IW_ACCESS_KEY" "$IW_SECRET_KEY" --insecure
+mc cp --insecure /tmp/df_final.parquet \
+  lakeseed/iceberg-warehouse/landing/insurance_retention/df_final.parquet
+mc ls --insecure lakeseed/iceberg-warehouse/landing/insurance_retention/   # verify it landed in MinIO
+```
+
+`lakekeeper-s3-credentials` reflects into the `airflow` ns, so both the bronze-ingest
+worker task and the training pod read the bucket with no extra secret to seal here.
 
 **Container image.** `ghcr.io/sdr3078/insurance-retention` is built and
 pushed by the workload repo's CI (`.github/workflows/image.yaml`); the GHCR
@@ -529,17 +564,19 @@ terminates TLS with the browser-trusted cert.
 **First-boot ordering (the one non-obvious bit).** Serving loads
 `@production`. On a fresh registry no bundle is promoted yet, so the pod
 holds at `/health` 503 (the startupProbe keeps it un-ready instead of
-crash-looping). Seed the registry:
-
-The image-sensor is active on creation, so within ~15 min of deploy it detects
-the current `:latest` digest and registers a candidate bundle automatically. To
-skip the wait, trigger it (or the training DAG) by hand:
+crash-looping). And training now reads `bronze.train`, so the lakehouse must be
+seeded before a candidate can be registered. Full sequence:
 
 ```bash
-# 1. Register a candidate bundle in-cluster (the sensor does this on its own;
-#    trigger it to avoid waiting for the cron):
+# 0. Seed the lakehouse (see "Data plane (bronze) + first seed" above): land
+#    df_final in the MinIO landing zone, then create insurance_retention.bronze.train:
 kubectl exec -n airflow deploy/airflow-scheduler -c scheduler -- \
-  airflow dags trigger insurance_retention_image_sensor   # -> registers a candidate
+  airflow dags trigger insurance_retention_bronze_ingest   # -> bronze.train + publishes snapshot id
+
+# 1. Register a candidate bundle in-cluster. The image-sensor (active on creation)
+#    does this within ~15 min of deploy; trigger it to skip the cron wait:
+kubectl exec -n airflow deploy/airflow-scheduler -c scheduler -- \
+  airflow dags trigger insurance_retention_image_sensor   # -> train reads bronze, registers a candidate
 
 # 2. Gated-promote it to @production (metadata only, run from anywhere with
 #    MLFLOW_TRACKING_URI pointed at the cluster MLflow; clone the workload repo):
