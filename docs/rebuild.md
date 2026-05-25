@@ -464,6 +464,72 @@ in for their cluster — the homelab-platform-specific values live in
 `charts/<app>/` here):
 - wedding-site: https://github.com/SDR3078/wedding-site/blob/main/deploy/README.md
 
+### 12. insurance-retention MLOps showcase (ML workload)
+
+The first real ML workload on the platform: a 3-model decision bundle
+(profit / covid / cost) that is trained, registered, gated-promoted, then
+served. The chart and DAG live *in this repo*; the container image and ML
+code live in the workload repo
+(https://github.com/SDR3078/insurance-retention), whose own README
+documents the build / train / serve / promote commands. Two
+ArgoCD-reconciled sides come up automatically once their dependencies
+(Steps 5, 7, 10) are healthy:
+
+- **Serving.** `apps/insurance-retention.yaml` points at
+  `charts/insurance-retention/` (namespace [PSA restricted],
+  `s3-credentials-sealed.yaml`, a Deployment that loads
+  `models:/insurance-retention-bundle@production`, a Service, and an Ingress
+  at `insurance-retention.lab.batzbak.top`).
+- **Training.** `airflow/dags/insurance_retention_train.py` is git-synced
+  into Airflow (Step 10). A KubernetesPodOperator launches the workload
+  image in the `airflow` namespace to run `train.py --register`.
+
+**Container image.** `ghcr.io/sdr3078/insurance-retention` is built and
+pushed by the workload repo's CI (`.github/workflows/image.yaml`); the GHCR
+*package* is public. Both the serving Deployment and the training KPO pull
+it. On rebuild the image already exists on GHCR, so there is nothing to do
+unless the package was deleted (re-run that repo's CI, or push a commit, to
+republish).
+
+**Sealed secrets (two copies of the `mlflow-artifacts` MinIO service account
+from Step 7).** Both are named `insurance-retention-s3-credentials`,
+resealed per namespace:
+- `charts/insurance-retention/s3-credentials-sealed.yaml`
+  (insurance-retention namespace): serving *downloads* model artifacts from
+  MinIO.
+- `charts/airflow/insurance-retention-s3-credentials-sealed.yaml` (airflow
+  namespace): the training KPO pod *uploads* artifacts to MinIO.
+
+Both decrypt with the restored master-key (Step 4), so there is **no
+regeneration on a clean rebuild**. Reseal only if the `mlflow-artifacts`
+service account is rotated, using the same read-live, build-manifest,
+kubeseal procedure as Step 7 (target the correct namespace each time).
+
+**Wildcard TLS.** `insurance-retention` is already listed in the reflection
+allow / auto annotations in `charts/cert-manager/certificate-wildcard.yaml`
+(Step 5), so `wildcard-lab-tls` reflects into the namespace and the Ingress
+terminates TLS with the browser-trusted cert.
+
+**First-boot ordering (the one non-obvious bit).** Serving loads
+`@production`. On a fresh registry no bundle is promoted yet, so the pod
+holds at `/health` 503 (the startupProbe keeps it un-ready instead of
+crash-looping). Seed the registry once:
+
+```bash
+# 1. Register a candidate bundle in-cluster, via the DAG:
+kubectl exec -n airflow deploy/airflow-scheduler -c scheduler -- \
+  airflow dags trigger insurance_retention_train      # registers bundle v1
+
+# 2. Gated-promote it to @production (metadata only, run from anywhere with
+#    MLFLOW_TRACKING_URI pointed at the cluster MLflow; clone the workload repo):
+MLFLOW_TRACKING_URI=https://mlflow.lab.batzbak.top \
+  python training/promote_bundle.py                   # gate nv_uplift_cv, set @production
+```
+
+Once `@production` exists the serving pod loads the bundle and `/health`
+returns 200. Re-triggering the DAG registers new candidate versions but
+never auto-promotes; promotion stays the separate gated step.
+
 ## Lost master key
 
 If the master-key backup is unavailable, sealed secrets in Git become

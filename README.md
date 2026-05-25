@@ -46,6 +46,14 @@ To be populated as sessions progress:
       validated; write-path validation deferred to next session due to
       a pyiceberg-vs-Lakekeeper remote-signing interop bug. See
       session-2026-05-22.md.
+- [x] insurance-retention MLOps showcase (2026-05-24/25): first real ML
+      workload. A 3-model decision bundle trained by an Airflow DAG
+      (KubernetesPodOperator), versioned and gated-promoted in the MLflow
+      registry, and served by an ArgoCD-managed FastAPI Deployment at
+      https://insurance-retention.lab.batzbak.top. Chart in
+      `charts/insurance-retention/`, DAG in `airflow/dags/`, recreation in
+      `docs/rebuild.md` Step 12. Workload repo:
+      https://github.com/SDR3078/insurance-retention
 - [ ] Trino + first concrete Iceberg DAG (next — validates Lakekeeper
       write path with a query engine that has proper RestSigner support)
 - [ ] Full medallion + model registry
