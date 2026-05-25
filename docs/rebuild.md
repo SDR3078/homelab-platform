@@ -482,7 +482,19 @@ ArgoCD-reconciled sides come up automatically once their dependencies
   at `insurance-retention.lab.batzbak.top`).
 - **Training.** `airflow/dags/insurance_retention_train.py` is git-synced
   into Airflow (Step 10). A KubernetesPodOperator launches the workload
-  image in the `airflow` namespace to run `train.py --register`.
+  image in the `airflow` namespace to run `train.py --register`. It takes the
+  image from `dag_run.conf['image']` (default `:latest`), so a trigger can pin
+  an immutable digest.
+- **CT trigger.** `airflow/dags/insurance_retention_image_sensor.py` (cron
+  `*/15`) resolves the digest of `insurance-retention:latest` from GHCR
+  anonymously (public package, no token), and when it differs from the Airflow
+  Variable `ir_last_trained_image` it fires the training DAG on that immutable
+  digest, advancing the watermark only after the run succeeds. So a new CI image
+  drives an automatic, reproducible retrain; promotion stays gated. `train.py`
+  stamps `image_ref` + `code_sha` into the bundle tags for lineage (the
+  Dockerfile bakes `IR_CODE_SHA` from CI's `github.sha`). Both DAGs set
+  `is_paused_upon_creation=False` so they are active on a fresh deploy (new DAGs
+  are otherwise paused by default and would silently never fire).
 
 **Container image.** `ghcr.io/sdr3078/insurance-retention` is built and
 pushed by the workload repo's CI (`.github/workflows/image.yaml`); the GHCR
@@ -513,12 +525,17 @@ terminates TLS with the browser-trusted cert.
 **First-boot ordering (the one non-obvious bit).** Serving loads
 `@production`. On a fresh registry no bundle is promoted yet, so the pod
 holds at `/health` 503 (the startupProbe keeps it un-ready instead of
-crash-looping). Seed the registry once:
+crash-looping). Seed the registry:
+
+The image-sensor is active on creation, so within ~15 min of deploy it detects
+the current `:latest` digest and registers a candidate bundle automatically. To
+skip the wait, trigger it (or the training DAG) by hand:
 
 ```bash
-# 1. Register a candidate bundle in-cluster, via the DAG:
+# 1. Register a candidate bundle in-cluster (the sensor does this on its own;
+#    trigger it to avoid waiting for the cron):
 kubectl exec -n airflow deploy/airflow-scheduler -c scheduler -- \
-  airflow dags trigger insurance_retention_train      # registers bundle v1
+  airflow dags trigger insurance_retention_image_sensor   # -> registers a candidate
 
 # 2. Gated-promote it to @production (metadata only, run from anywhere with
 #    MLFLOW_TRACKING_URI pointed at the cluster MLflow; clone the workload repo):
