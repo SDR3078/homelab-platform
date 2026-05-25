@@ -16,9 +16,12 @@ Design (from the data-engineer + mlops-engineer review):
   watermark (Airflow Variable `ir_bronze_content_sha`) skips the run when the landing
   bytes are unchanged, so a static dataset never loops spurious retrains (mirrors the
   image-sensor's digest watermark).
-- Bronze hygiene: strip the case's trailing-whitespace column names, rename
-  `non-antibiotics`, drop the `Unnamed: 0` Excel index; keep targets nullable as
-  landed (NO Covid-label recovery here -- that's a silver/`build_features` decision).
+- Bronze hygiene: ONLY parity-neutral fixes -- strip trailing-whitespace column
+  names + drop the `Unnamed: 0` Excel index (build_features re-does both, so bronze
+  and the wheel agree). NO column renames (renaming is a feature-contract decision
+  that lives in the wheel; build_features does NOT rename, so a bronze rename would
+  diverge train-from-bronze from serve-from-API) and NO Covid-label recovery (also a
+  `build_features` decision); targets stay nullable as landed.
 - A minimal structural DQ gate (row count + targets present + Covid=0 => Covid_amt=0)
   before the write; no heavy DQ framework.
 - Provenance columns: `_ingested_at`, `_source_uri`, `_content_sha256`.
@@ -44,6 +47,7 @@ TABLE = "train"
 LANDING_URI = "s3://iceberg-warehouse/landing/insurance_retention/df_final.parquet"
 EXPECTED_ROWS = 5000
 WATERMARK_VAR = "ir_bronze_content_sha"
+SNAPSHOT_VAR = "ir_bronze_snapshot_id"  # exposes the landed snapshot id to the training DAG
 
 BRONZE_ASSET = Asset(
     name="insurance_retention_bronze",
@@ -121,10 +125,13 @@ def insurance_retention_bronze_ingest():
                 f"bronze.{TABLE} unchanged (sha {content_sha[:12]}); skipping"
             )
 
-        # 2. Hygiene: whitespace col names, rename non-antibiotics, drop the Excel index.
+        # 2. Hygiene -- ONLY parity-neutral fixes. build_features re-strips names and
+        #    re-drops Unnamed, so bronze and the wheel agree. Do NOT rename columns
+        #    here (e.g. non-antibiotics): renaming is a feature-contract decision the
+        #    wheel owns, and the wheel does NOT rename, so a bronze rename would make
+        #    train-from-bronze disagree with serve-from-API. Keep names raw.
         df = pd.read_parquet(io.BytesIO(raw))
         df.columns = [c.strip() for c in df.columns]
-        df = df.rename(columns={"non-antibiotics": "non_antibiotics"})
         df = df.drop(columns=[c for c in df.columns if c.startswith("Unnamed")], errors="ignore")
 
         # 3. Structural DQ gate (fixed-dataset contract).
@@ -161,6 +168,10 @@ def insurance_retention_bronze_ingest():
 
         Variable.set(WATERMARK_VAR, content_sha)
         snap = t.current_snapshot().snapshot_id
+        # Expose the landed snapshot id for the training DAG to PIN (the data leg of
+        # the code+image+data lineage triangle): training reads bronze.train@snap and
+        # stamps it into the bundle manifest as data_snapshot_id.
+        Variable.set(SNAPSHOT_VAR, str(snap))
         n = len(t.scan().to_arrow())
         print(f"bronze.{TABLE}: {n} rows, snapshot_id={snap}, content_sha={content_sha[:12]}")
 
