@@ -508,6 +508,34 @@ ArgoCD-reconciled sides come up automatically once their dependencies
   snapshot id comes from the bronze DAG). Both DAGs set
   `is_paused_upon_creation=False` so they are active on a fresh deploy (new DAGs
   are otherwise paused by default and would silently never fire).
+- **Scoring (batch == the live `/select`).** Three more DAGs close the medallion's scoring half
+  (all `is_paused_upon_creation=False`):
+  - `insurance_retention_bronze_score_ingest` — lands `score.csv` (a MinIO landing Parquet) into
+    Iceberg `insurance_retention.bronze.score` (overwrite + content-hash watermark
+    `ir_score_content_sha` + a no-targets DQ gate [exactly 500 rows; targets ABSENT; `DOB` present,
+    not `Birth_date`] + provenance), and **stamps a 0-indexed `candidate_id` from the file's physical
+    row order** — `score.csv` has no natural id, and this row id is what lets the batch selection line
+    up with serving's POST-position `/select`. Publishes `ir_score_snapshot_id` and emits the
+    `insurance_retention_bronze_score` Asset.
+  - `insurance_retention_scoring` — `schedule = insurance_retention_production | insurance_retention_bronze_score`
+    (AssetAny). A KPO runs `python -m training.score --season <year> --top-k 200` (module form, so
+    `score.py`'s repo-level `import bundle` resolves with `/app` on the path — a plain
+    `python /app/training/score.py` would NOT). It reads `bronze.score@ir_score_snapshot_id`, loads the
+    `@production` bundle via the SAME shared loader + scoring as the serving app, and writes per-season
+    `insurance_retention.gold.selections` (per-partition overwrite on `season`; columns: predictions +
+    `rank` + `selected` + lineage [`bundle_id`/`bundle_version`, `covid_threshold`,
+    `code_sha`/`data_snapshot_id` from the bundle manifest, `score_snapshot_id`, `scored_at`]).
+  - `insurance_retention_promote` — `schedule=None` (deliberately manual + gated). A KPO runs
+    `promote_bundle.py` (gate `nv_uplift_cv ≥ 0.30`, atomic `@production` on all four models with
+    rollback); on success a downstream `announce_promotion` task emits the `insurance_retention_production`
+    Asset, which **auto-cascades a re-score** (the `production` edge → `scoring`). So the full causal
+    chain is *data/code → retrain → gate → promote → score*. (A standalone script can't emit an Airflow
+    Asset, which is why promotion is wrapped in a DAG.)
+
+  **Promotion ≠ serving reload.** Serving loads `@production` once, at startup; a promotion is an alias
+  move (not a new image), so ArgoCD does NOT roll the Deployment. After promoting, run
+  `kubectl rollout restart deploy/insurance-retention -n insurance-retention` so serving loads the new
+  bundle — only then does batch == the live `/select`.
 
 **Data plane (bronze) + first seed.** Training reads
 `insurance_retention.bronze.train`, so on a fresh lakehouse that table must be seeded
@@ -534,6 +562,18 @@ mc ls --insecure lakeseed/iceberg-warehouse/landing/insurance_retention/   # ver
 
 `lakekeeper-s3-credentials` reflects into the `airflow` ns, so both the bronze-ingest
 worker task and the training pod read the bucket with no extra secret to seal here.
+
+**Scoring data plane (`bronze.score`).** The scoring DAG reads `insurance_retention.bronze.score`,
+seeded the same way as `bronze.train` but from `score.csv` (the 2022 scoring cohort, no targets).
+Row order is the contract — `candidate_id` is `range(len)` over the landed file — so do not reorder it:
+
+```bash
+# From a clone of the workload repo (same MinIO port-forward + iceberg-warehouse svcacct as above):
+.venv/bin/python -c "import pandas as pd; pd.read_csv('data/score.csv').to_parquet('/tmp/score.parquet', index=False)"
+mc cp --insecure /tmp/score.parquet \
+  lakeseed/iceberg-warehouse/landing/insurance_retention/score.parquet
+mc ls --insecure lakeseed/iceberg-warehouse/landing/insurance_retention/   # df_final.parquet + score.parquet
+```
 
 **Container image.** `ghcr.io/sdr3078/insurance-retention` is built and
 pushed by the workload repo's CI (`.github/workflows/image.yaml`); the GHCR
@@ -568,25 +608,35 @@ crash-looping). And training now reads `bronze.train`, so the lakehouse must be
 seeded before a candidate can be registered. Full sequence:
 
 ```bash
-# 0. Seed the lakehouse (see "Data plane (bronze) + first seed" above): land
-#    df_final in the MinIO landing zone, then create insurance_retention.bronze.train:
+# 0. Seed the lakehouse (see the two seed blocks above): land df_final AND score.csv in the
+#    MinIO landing zone, then create the bronze tables:
 kubectl exec -n airflow deploy/airflow-scheduler -c scheduler -- \
-  airflow dags trigger insurance_retention_bronze_ingest   # -> bronze.train + publishes snapshot id
-
-# 1. Register a candidate bundle in-cluster. The image-sensor (active on creation)
-#    does this within ~15 min of deploy; trigger it to skip the cron wait:
+  airflow dags trigger insurance_retention_bronze_ingest         # -> bronze.train + ir_bronze_snapshot_id
 kubectl exec -n airflow deploy/airflow-scheduler -c scheduler -- \
-  airflow dags trigger insurance_retention_image_sensor   # -> train reads bronze, registers a candidate
+  airflow dags trigger insurance_retention_bronze_score_ingest   # -> bronze.score + ir_score_snapshot_id
 
-# 2. Gated-promote it to @production (metadata only, run from anywhere with
-#    MLFLOW_TRACKING_URI pointed at the cluster MLflow; clone the workload repo):
-MLFLOW_TRACKING_URI=https://mlflow.lab.batzbak.top \
-  python training/promote_bundle.py                   # gate nv_uplift_cv, set @production
+# 1. Register a candidate bundle. The image-sensor (active on creation) does this within ~15 min;
+#    trigger it to skip the cron wait:
+kubectl exec -n airflow deploy/airflow-scheduler -c scheduler -- \
+  airflow dags trigger insurance_retention_image_sensor          # -> train reads bronze, registers a candidate
+
+# 2. Gated-promote to @production via the promote DAG (atomic + emits the production Asset, which
+#    AUTO-CASCADES the scoring DAG -> gold.selections now that bronze.score exists):
+kubectl exec -n airflow deploy/airflow-scheduler -c scheduler -- \
+  airflow dags trigger insurance_retention_promote              # gate nv_uplift_cv, set @production, fire the Asset
+#    (ad-hoc alternative, metadata-only from any host with the tracking URI:)
+#    MLFLOW_TRACKING_URI=https://mlflow.lab.batzbak.top python training/promote_bundle.py
+
+# 3. Make serving load the freshly-promoted bundle (a promotion is an alias move, not a new image,
+#    so ArgoCD does not roll the Deployment on its own):
+kubectl rollout restart deploy/insurance-retention -n insurance-retention
 ```
 
-Once `@production` exists the serving pod loads the bundle and `/health`
-returns 200. Re-triggering the DAG registers new candidate versions but
-never auto-promotes; promotion stays the separate gated step.
+Once `@production` exists (step 2) and serving has reloaded it (step 3), `/health` returns 200,
+`gold.selections` holds the season's ranked top-200, and the batch selection equals the live
+`/select`. Re-triggering any DAG registers new candidate versions / re-scores but never
+auto-promotes; promotion stays the separate gated step, and is the only thing that moves
+`@production`.
 
 ## Lost master key
 
