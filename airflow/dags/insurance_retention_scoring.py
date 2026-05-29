@@ -88,7 +88,10 @@ def insurance_retention_scoring():
         namespace="airflow",
         image="{{ ti.xcom_pull(task_ids='resolve_image') }}",
         image_pull_policy="Always",
-        cmds=["python", "/app/training/score.py"],
+        # Run as a module (not a path) so /app (WORKDIR) is on sys.path and score.py's repo-level
+        # `import bundle` resolves -- mirrors how serving launches (`uvicorn serving.app:app`).
+        # `python /app/training/score.py` would put /app/training on sys.path[0], not /app.
+        cmds=["python", "-m", "training.score"],
         arguments=[
             "--season", "{{ ti.xcom_pull(task_ids='resolve_season') }}",
             "--top-k", TOP_K,
