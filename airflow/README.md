@@ -38,7 +38,8 @@ new DAG up within seconds.
 1. Create `airflow/dags/your_dag.py`
 2. Commit + push
 3. CI runs DAG-parse smoke test (catches `ImportError` etc.)
-4. Once merged to main, git-sync (inside the Airflow scheduler pod)
+   - Caveat: DAG-parse imports the file but never executes a KPO's `cmds`, so a runtime launch bug (e.g. `python /app/x.py` vs `python -m x` sys.path) slips through — that's caught by the workload image's smoke test (insurance-retention #44), not here.
+4. Once merged to main, git-sync (inside the Airflow dag-processor pod)
    pulls the new file within ~30s
 5. DAG appears in the Airflow UI
 
