@@ -73,6 +73,23 @@ spec:
                 secretKeyRef:
                   name: insurance-retention-s3-credentials
                   key: AWS_SECRET_ACCESS_KEY
+            # Lakehouse access for GET /select/gold (the gold-backed batch readback). The catalog
+            # is built per-request via the shared `lakehouse.build_catalog()`, so Lakekeeper or
+            # MinIO being unreachable yields a 503 on /select/gold without affecting /health.
+            - name: LAKEKEEPER_URI
+              value: http://lakekeeper.lakekeeper.svc.cluster.local:8181/catalog
+            - name: LAKE_WAREHOUSE
+              value: demo
+            - name: LAKE_S3_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: lakekeeper-s3-credentials   # reflected from the lakekeeper ns
+                  key: AWS_ACCESS_KEY_ID
+            - name: LAKE_S3_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: lakekeeper-s3-credentials
+                  key: AWS_SECRET_ACCESS_KEY
           volumeMounts:
             - name: cluster-ca
               mountPath: /etc/ssl/k3s/ca.crt
