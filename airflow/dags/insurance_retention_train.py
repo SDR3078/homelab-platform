@@ -94,7 +94,11 @@ def insurance_retention_train():
         namespace="airflow",
         image="{{ ti.xcom_pull(task_ids='resolve_image') }}",
         image_pull_policy="Always",
-        cmds=["python", "/app/training/train.py"],
+        # Run as a MODULE (-m), matching the scoring DAG. `python -m training.train` puts the
+        # image WORKDIR (/app) on sys.path, so train.py's repo-root `from lakehouse import
+        # build_catalog` resolves. `python /app/training/train.py` puts only /app/training on the
+        # path and breaks that import (ModuleNotFoundError: No module named 'lakehouse').
+        cmds=["python", "-m", "training.train"],
         arguments=["--register", "--experiment-name", "insurance-retention"],
         env_vars={
             "MLFLOW_TRACKING_URI": "http://mlflow.mlflow.svc.cluster.local",
@@ -109,7 +113,7 @@ def insurance_retention_train():
             Secret("env", "AWS_ACCESS_KEY_ID", "insurance-retention-s3-credentials", "AWS_ACCESS_KEY_ID"),
             Secret("env", "AWS_SECRET_ACCESS_KEY", "insurance-retention-s3-credentials", "AWS_SECRET_ACCESS_KEY"),
             # Lakehouse read (Iceberg data files in iceberg-warehouse) -- the purpose-built
-            # lakekeeper svcacct; train.py's _build_catalog prefers LAKE_S3_* over AWS_*.
+            # lakekeeper svcacct; the shared lakehouse.build_catalog() prefers LAKE_S3_* over AWS_*.
             # Injected into THIS pod only (serving's Deployment is a separate spec).
             Secret("env", "LAKE_S3_ACCESS_KEY_ID", "lakekeeper-s3-credentials", "AWS_ACCESS_KEY_ID"),
             Secret("env", "LAKE_S3_SECRET_ACCESS_KEY", "lakekeeper-s3-credentials", "AWS_SECRET_ACCESS_KEY"),
