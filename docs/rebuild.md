@@ -561,7 +561,12 @@ mc ls --insecure lakeseed/iceberg-warehouse/landing/insurance_retention/   # ver
 ```
 
 `lakekeeper-s3-credentials` reflects into the `airflow` ns, so both the bronze-ingest
-worker task and the training pod read the bucket with no extra secret to seal here.
+worker task and the training pod read the bucket with no extra secret to seal here. It
+also reflects into the `insurance-retention` ns (same SealedSecret's reflector
+allow/auto-namespaces list), where the serving pod uses it for `GET /select/gold` to read
+`gold.selections` through the shared `lakehouse.build_catalog()`. The serving Deployment's
+`secret.reloader.stakater.com/reload` annotation lists BOTH that reflected secret and its
+own `insurance-retention-s3-credentials`, so a Lakekeeper key rotation rolls the pod.
 
 **Scoring data plane (`bronze.score`).** The scoring DAG reads `insurance_retention.bronze.score`,
 seeded the same way as `bronze.train` but from `score.csv` (the 2022 scoring cohort, no targets).

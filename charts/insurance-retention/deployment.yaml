@@ -9,8 +9,13 @@
 # ArgoCD Image Updater is the planned next step; until then imagePullPolicy:
 # Always picks up new :latest pushes on pod restart.
 #
-# Reloader annotation rolls the pod automatically when the sealed S3 secret is
-# resealed (stakater/reloader is installed cluster-wide).
+# Reloader annotation rolls the pod automatically when EITHER S3 secret it consumes is
+# resealed/updated (stakater/reloader is installed cluster-wide):
+#   - insurance-retention-s3-credentials : the pod's own MLflow/MinIO svcacct.
+#   - lakekeeper-s3-credentials          : reflected from the lakekeeper ns, used by
+#                                          GET /select/gold to read gold.selections. Without
+#                                          watching it, a Lakekeeper key rotation would leave
+#                                          the pod on stale creds (silent 503s on /select/gold).
 
 apiVersion: apps/v1
 kind: Deployment
@@ -19,7 +24,7 @@ metadata:
   namespace: insurance-retention
   annotations:
     argocd.argoproj.io/sync-wave: "1"
-    secret.reloader.stakater.com/reload: "insurance-retention-s3-credentials"
+    secret.reloader.stakater.com/reload: "insurance-retention-s3-credentials,lakekeeper-s3-credentials"
   labels:
     app.kubernetes.io/name: insurance-retention
     app.kubernetes.io/component: serving
