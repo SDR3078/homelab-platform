@@ -99,6 +99,9 @@ def insurance_retention_scoring():
         env_vars={
             "MLFLOW_TRACKING_URI": "http://mlflow.mlflow.svc.cluster.local",
             "MLFLOW_S3_ENDPOINT_URL": "https://minio.data-platform.svc.cluster.local",
+            # Iceberg REST catalog (Lakekeeper). Set explicitly: lakehouse.py's default was scrubbed to a
+            # localhost placeholder for the public repo and has no fallback to a cluster-set var.
+            "LAKEKEEPER_URI": "http://lakekeeper.lakekeeper.svc.cluster.local:8181/catalog",
             "AWS_CA_BUNDLE": "/etc/ssl/k3s/ca.crt",
             "HOME": "/home/appuser",
             "IR_SCORE_SNAPSHOT_ID": "{{ ti.xcom_pull(task_ids='resolve_score_snapshot') }}",  # pin the read
