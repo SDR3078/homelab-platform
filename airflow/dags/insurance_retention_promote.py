@@ -58,7 +58,11 @@ def insurance_retention_promote():
         namespace="airflow",
         image="{{ ti.xcom_pull(task_ids='resolve_image') }}",
         image_pull_policy="Always",
-        cmds=["python", "/app/training/promote_bundle.py"],
+        # Module form (matches train/score): puts the image WORKDIR (/app) on sys.path so any
+        # repo-root import added to promote_bundle.py later resolves -- script form would break it
+        # the way it broke train.py. promote_bundle has no repo-root imports today; this is the
+        # safe-form-only invariant, enforced by the CI image smoke test.
+        cmds=["python", "-m", "training.promote_bundle"],
         arguments=[
             "--bundle-id", "{{ (dag_run.conf or {}).get('bundle_id', 'latest') }}",
             "--nv-uplift-floor", "{{ (dag_run.conf or {}).get('nv_uplift_floor', 0.3) }}",
