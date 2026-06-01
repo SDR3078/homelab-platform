@@ -66,6 +66,7 @@ def insurance_retention_promote():
         arguments=[
             "--bundle-id", "{{ (dag_run.conf or {}).get('bundle_id', 'latest') }}",
             "--nv-uplift-floor", "{{ (dag_run.conf or {}).get('nv_uplift_floor', 0.3) }}",
+            "--max-regression", "{{ (dag_run.conf or {}).get('max_regression', 0.05) }}",
         ],
         env_vars={
             "MLFLOW_TRACKING_URI": "http://mlflow.mlflow.svc.cluster.local",
