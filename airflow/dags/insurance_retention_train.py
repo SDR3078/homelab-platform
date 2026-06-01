@@ -111,6 +111,9 @@ def insurance_retention_train():
             "HOME": "/home/appuser",
             "IR_IMAGE_REF": "{{ ti.xcom_pull(task_ids='resolve_image') }}",  # lineage: code+image
             "IR_DATA_SNAPSHOT_ID": "{{ ti.xcom_pull(task_ids='resolve_data_snapshot') }}",  # lineage: data leg
+            # The resolve-params init container writes the @production tuned params here (or, on first
+            # run before any tune is promoted, leaves the image-baked synthetic default in place).
+            "BEST_PARAMS_PATH": "/params/best_params.json",
         },
         secrets=[
             # MLflow artifact store (MinIO) -- model upload/download.
@@ -126,7 +129,9 @@ def insurance_retention_train():
             k8s.V1Volume(
                 name="cluster-ca",
                 config_map=k8s.V1ConfigMapVolumeSource(name="kube-root-ca.crt"),
-            )
+            ),
+            # Shared by the resolve-params init container (writes) + the train container (reads).
+            k8s.V1Volume(name="params", empty_dir=k8s.V1EmptyDirVolumeSource()),
         ],
         volume_mounts=[
             k8s.V1VolumeMount(
@@ -134,6 +139,55 @@ def insurance_retention_train():
                 mount_path="/etc/ssl/k3s/ca.crt",
                 sub_path="ca.crt",
                 read_only=True,
+            ),
+            k8s.V1VolumeMount(name="params", mount_path="/params", read_only=True),
+        ],
+        # Init container: resolve the @production tuned params into /params BEFORE train.py runs, so the
+        # CT refits the cluster's REAL-data params. On first run (no @production alias yet) resolve_params
+        # exits 0 without writing and train.py reads the image-baked synthetic default. Uses :latest
+        # (resolve_params is stable) + only MLflow/MinIO creds (it reads the registry, not the lakehouse).
+        init_containers=[
+            k8s.V1Container(
+                name="resolve-params",
+                image=IMAGE,
+                image_pull_policy="Always",
+                command=["python", "-m", "training.resolve_params"],
+                args=["--output", "/params/best_params.json"],
+                env=[
+                    k8s.V1EnvVar(name="MLFLOW_TRACKING_URI", value="http://mlflow.mlflow.svc.cluster.local"),
+                    k8s.V1EnvVar(name="MLFLOW_S3_ENDPOINT_URL", value="https://minio.data-platform.svc.cluster.local"),
+                    k8s.V1EnvVar(name="AWS_CA_BUNDLE", value="/etc/ssl/k3s/ca.crt"),
+                    k8s.V1EnvVar(name="HOME", value="/home/appuser"),
+                    k8s.V1EnvVar(
+                        name="AWS_ACCESS_KEY_ID",
+                        value_from=k8s.V1EnvVarSource(
+                            secret_key_ref=k8s.V1SecretKeySelector(
+                                name="insurance-retention-s3-credentials", key="AWS_ACCESS_KEY_ID"
+                            )
+                        ),
+                    ),
+                    k8s.V1EnvVar(
+                        name="AWS_SECRET_ACCESS_KEY",
+                        value_from=k8s.V1EnvVarSource(
+                            secret_key_ref=k8s.V1SecretKeySelector(
+                                name="insurance-retention-s3-credentials", key="AWS_SECRET_ACCESS_KEY"
+                            )
+                        ),
+                    ),
+                ],
+                volume_mounts=[
+                    k8s.V1VolumeMount(
+                        name="cluster-ca", mount_path="/etc/ssl/k3s/ca.crt", sub_path="ca.crt", read_only=True
+                    ),
+                    k8s.V1VolumeMount(name="params", mount_path="/params"),
+                ],
+                security_context=k8s.V1SecurityContext(
+                    allow_privilege_escalation=False,
+                    run_as_non_root=True,
+                    run_as_user=1001,
+                    read_only_root_filesystem=False,
+                    capabilities=k8s.V1Capabilities(drop=["ALL"]),
+                ),
             )
         ],
         container_resources=k8s.V1ResourceRequirements(
