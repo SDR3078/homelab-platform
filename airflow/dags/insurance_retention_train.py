@@ -94,10 +94,10 @@ def insurance_retention_train():
         namespace="airflow",
         image="{{ ti.xcom_pull(task_ids='resolve_image') }}",
         image_pull_policy="Always",
-        # Run as a MODULE (-m), matching the scoring DAG. `python -m training.train` puts the
-        # image WORKDIR (/app) on sys.path, so train.py's repo-root `from lakehouse import
-        # build_catalog` resolves. `python /app/pipelines/train.py` puts only /app/training on the
-        # path and breaks that import (ModuleNotFoundError: No module named 'lakehouse').
+        # Run as a MODULE (-m), matching the scoring DAG. `python -m pipelines.train` puts the
+        # image WORKDIR (/app) on sys.path, so train.py's `from runtime.lakehouse import
+        # build_catalog` resolves. `python /app/pipelines/train.py` would put only /app/pipelines on
+        # the path and break that import (ModuleNotFoundError: No module named 'runtime').
         cmds=["python", "-m", "pipelines.train"],
         arguments=["--register", "--experiment-name", "insurance-retention"],
         env_vars={
