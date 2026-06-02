@@ -70,7 +70,7 @@ def insurance_retention_tune():
         image="{{ ti.xcom_pull(task_ids='resolve_image') }}",
         image_pull_policy="Always",
         # Module form (-m) so /app is on sys.path for the repo-root imports (lakehouse), like train.
-        cmds=["python", "-m", "training.tune"],
+        cmds=["python", "-m", "pipelines.tune"],
         # --register: publish a new insurance-retention-params version (un-aliased). --output is a
         # throwaway pod path (the artifact lands in MLflow; the baked /app/artifacts copy is read-only).
         arguments=[

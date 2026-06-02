@@ -1,7 +1,7 @@
 """insurance_retention_scoring -- batch-score the population into gold.selections.
 
 Orchestration only (like the training DAG): a KubernetesPodOperator launches the model image to run
-training/score.py, which reads bronze.score@snapshot, loads the @production bundle, runs the shared
+pipelines/score.py, which reads bronze.score@snapshot, loads the @production bundle, runs the shared
 build_features + score + select_top_k, and writes per-season gold.selections. Because the bundle
 loader (bundle.py) AND the scoring (the insurance_retention wheel) are shared with serving/app.py,
 the batch selected set equals the live /select top-K by construction -- "batch == sync".
@@ -90,8 +90,8 @@ def insurance_retention_scoring():
         image_pull_policy="Always",
         # Run as a module (not a path) so /app (WORKDIR) is on sys.path and score.py's repo-level
         # `import bundle` resolves -- mirrors how serving launches (`uvicorn serving.app:app`).
-        # `python /app/training/score.py` would put /app/training on sys.path[0], not /app.
-        cmds=["python", "-m", "training.score"],
+        # `python /app/pipelines/score.py` would put /app/training on sys.path[0], not /app.
+        cmds=["python", "-m", "pipelines.score"],
         arguments=[
             "--season", "{{ ti.xcom_pull(task_ids='resolve_season') }}",
             "--top-k", TOP_K,

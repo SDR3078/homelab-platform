@@ -52,7 +52,7 @@ def insurance_retention_promote_params():
         namespace="airflow",
         image="{{ ti.xcom_pull(task_ids='resolve_image') }}",
         image_pull_policy="Always",
-        cmds=["python", "-m", "training.promote_params"],
+        cmds=["python", "-m", "pipelines.promote_params"],
         # Default 'latest' = the most recently registered version (the tune DAG's run). promote_params
         # refuses a non-real version unless --allow-synthetic, which the cluster path deliberately omits.
         arguments=["--version", "{{ (dag_run.conf or {}).get('version', 'latest') }}"],

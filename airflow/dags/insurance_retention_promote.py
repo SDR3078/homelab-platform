@@ -1,7 +1,7 @@
 """insurance_retention_promote -- the gated promotion step, as an auditable DAG that emits the
 production Asset so the scoring DAG can run on it.
 
-promote_bundle.py (training/) is a standalone script: it atomically sets the @production alias on
+promote_bundle.py (pipelines/) is a standalone script: it atomically sets the @production alias on
 the three component models + the meta bundle, gated on an NV-uplift floor, with rollback if any
 alias set fails. Wrapping it in a DAG (rather than running it as a raw Job) buys two things:
   1. an Airflow audit trail of who promoted what, when, with which floor; and
@@ -62,7 +62,7 @@ def insurance_retention_promote():
         # repo-root import added to promote_bundle.py later resolves -- script form would break it
         # the way it broke train.py. promote_bundle has no repo-root imports today; this is the
         # safe-form-only invariant, enforced by the CI image smoke test.
-        cmds=["python", "-m", "training.promote_bundle"],
+        cmds=["python", "-m", "pipelines.promote_bundle"],
         arguments=[
             "--bundle-id", "{{ (dag_run.conf or {}).get('bundle_id', 'latest') }}",
             "--nv-uplift-floor", "{{ (dag_run.conf or {}).get('nv_uplift_floor', 0.3) }}",

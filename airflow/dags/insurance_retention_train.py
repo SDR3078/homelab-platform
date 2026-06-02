@@ -96,9 +96,9 @@ def insurance_retention_train():
         image_pull_policy="Always",
         # Run as a MODULE (-m), matching the scoring DAG. `python -m training.train` puts the
         # image WORKDIR (/app) on sys.path, so train.py's repo-root `from lakehouse import
-        # build_catalog` resolves. `python /app/training/train.py` puts only /app/training on the
+        # build_catalog` resolves. `python /app/pipelines/train.py` puts only /app/training on the
         # path and breaks that import (ModuleNotFoundError: No module named 'lakehouse').
-        cmds=["python", "-m", "training.train"],
+        cmds=["python", "-m", "pipelines.train"],
         arguments=["--register", "--experiment-name", "insurance-retention"],
         env_vars={
             "MLFLOW_TRACKING_URI": "http://mlflow.mlflow.svc.cluster.local",
@@ -151,7 +151,7 @@ def insurance_retention_train():
                 name="resolve-params",
                 image=IMAGE,
                 image_pull_policy="Always",
-                command=["python", "-m", "training.resolve_params"],
+                command=["python", "-m", "pipelines.resolve_params"],
                 args=["--output", "/params/best_params.json"],
                 env=[
                     k8s.V1EnvVar(name="MLFLOW_TRACKING_URI", value="http://mlflow.mlflow.svc.cluster.local"),

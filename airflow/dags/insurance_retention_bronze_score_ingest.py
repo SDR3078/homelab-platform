@@ -2,7 +2,7 @@
 
 Mirrors insurance_retention_bronze_ingest (the training-data ingest) for the SCORING input:
 score.csv lands as parquet in a MinIO landing zone, and this DAG writes it to Iceberg
-insurance_retention.bronze.score via Lakekeeper. The batch scorer (training/score.py, in the model
+insurance_retention.bronze.score via Lakekeeper. The batch scorer (pipelines/score.py, in the model
 image) later reads bronze.score at a pinned snapshot and runs build_features IN-PROCESS -- so
 bronze.score is raw + load-bearing, exactly like bronze.train; there is no silver/feature table.
 
