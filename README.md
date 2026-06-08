@@ -43,8 +43,9 @@ To be populated as sessions progress:
 - [x] Airflow (session 8) — Dagster originally planned, switched after a
       cross-orchestrator comparison; see session-2026-05-13.md
 - [x] Lakekeeper Iceberg REST Catalog (session 9) — API + read path
-      validated; write-path validation deferred to next session due to
-      a pyiceberg-vs-Lakekeeper remote-signing interop bug. See
+      validated; write path validated in the session-9 third checkpoint
+      ("session 10") by fixing remote-signing at the source (warehouse
+      `remote-signing-enabled: false`) + PyIceberg/FsspecFileIO. See
       session-2026-05-22.md.
 - [x] insurance-retention MLOps showcase (2026-05-24/25): first real ML
       workload. A 3-model decision bundle trained by an Airflow DAG
@@ -56,11 +57,16 @@ To be populated as sessions progress:
       `charts/insurance-retention/`, DAG in `airflow/dags/`, recreation in
       `docs/rebuild.md` Step 12. Workload repo:
       https://github.com/SDR3078/insurance-retention
-- [ ] Trino + first concrete Iceberg DAG (next — validates Lakekeeper
-      write path with a query engine that has proper RestSigner support)
-- [ ] Full medallion + model registry
-- [ ] Data quality + scheduling
-- [ ] kube-prometheus-stack
+- [x] Iceberg data plane — medallion bronze.train / bronze.score →
+      gold.selections via PyIceberg DAGs (platform-side notes sessions
+      11–13, reconstructed 2026-06-08). Supersedes the planned "Trino +
+      first Iceberg DAG": the write path was validated with PyIceberg, and
+      Trino (1–2Gi always-on) was rejected for this single-node ML node —
+      it returns only if an analytics-SQL consumer appears.
+- [x] Model registry + gated promotion + in-cluster tuning lifecycle
+      (MLflow aliases, NV non-regression gate, tune → promote-params → train)
+- [ ] Data quality + scheduling (bronze DQ is minimal/structural today)
+- [ ] kube-prometheus-stack (next — the platform now runs blind; overdue)
 - [ ] Pipeline & model observability
 - [ ] LiteLLM + Langfuse + pgvector
 - [ ] Portfolio chatbot as cluster app
