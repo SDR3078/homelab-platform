@@ -1,0 +1,31 @@
+{{- /*
+  Renders each demo Application VERBATIM via .Files.Get (Helm never parses the
+  upstream `values:` blocks, so nothing in them can be misinterpreted) — but only
+  when its switchboard flag is true. An app with a bootstrap pair (namespace +
+  sealed secrets) toggles atomically with its chart Application under one flag.
+*/ -}}
+{{- if and .Values.insuranceRetention.enabled (not (and .Values.mlflow.enabled .Values.lakekeeper.enabled)) }}
+{{- fail "insuranceRetention.enabled requires mlflow.enabled AND lakekeeper.enabled — it loads @production from MLflow and reads gold.selections from Lakekeeper at runtime." }}
+{{- end }}
+{{- if .Values.mlflow.enabled }}
+---
+{{ .Files.Get "applications/mlflow-bootstrap.yaml" }}
+---
+{{ .Files.Get "applications/mlflow.yaml" }}
+{{- end }}
+{{- if .Values.lakekeeper.enabled }}
+---
+{{ .Files.Get "applications/lakekeeper-bootstrap.yaml" }}
+---
+{{ .Files.Get "applications/lakekeeper.yaml" }}
+{{- end }}
+{{- if .Values.airflow.enabled }}
+---
+{{ .Files.Get "applications/airflow-bootstrap.yaml" }}
+---
+{{ .Files.Get "applications/airflow.yaml" }}
+{{- end }}
+{{- if .Values.insuranceRetention.enabled }}
+---
+{{ .Files.Get "applications/insurance-retention.yaml" }}
+{{- end }}

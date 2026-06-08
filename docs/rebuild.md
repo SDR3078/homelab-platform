@@ -643,6 +643,77 @@ Once `@production` exists (step 2) and serving has reloaded it (step 3), `/healt
 auto-promotes; promotion stays the separate gated step, and is the only thing that moves
 `@production`.
 
+## Parking / un-parking the demo stack
+
+The MLOps showcase (`mlflow`, `lakekeeper`, `airflow`, `insurance-retention`) is
+portfolio/demo, not load-bearing. It is toggled as a group from one switchboard,
+`charts/demo-apps/values.yaml` (rendered by `apps/demo-apps.yaml`): flip a flag,
+push, ArgoCD prunes/recreates. Parking deletes the pods + namespaces (reclaims
+compute); the DATA survives in the kept platform base (CNPG Postgres DBs + MinIO
+buckets), so un-parking reconnects to it — nothing is lost.
+
+Only stateless, non-load-bearing apps belong in the switchboard. NEVER add a
+PVC-owning or load-bearing app — a prune could destroy data.
+
+**Pre-flight (before the first park, or after any controller rebuild).** Un-parking
+re-applies every demo app's SealedSecrets, which only decrypt if the controller's
+master key is intact (the `lakekeeper-encryption-key` + all S3 creds ride along
+sealed in Git — the master key is the one thing that MUST persist). Confirm the
+backup matches in-cluster state per **Step 9** before parking.
+
+**Park.** In `charts/demo-apps/values.yaml` set the target apps to `enabled: false`
+(all four for max reclaim); commit + push. Namespace teardown takes ~2-5 min on this
+single node (each `local-path` PVC is freed before its namespace finalizer clears), so
+a `Terminating` namespace at ~60s is normal, not a hung finalizer. Re-enabling
+`insuranceRetention` later requires `mlflow` AND `lakekeeper` (a chart guard enforces
+it). Verify — including that the KEPT apps the root re-sync also touched are fine:
+
+```bash
+kubectl get application demo-apps -n argocd                        # Synced + Healthy
+kubectl get applications -n argocd | grep -E 'mlflow|lakekeeper|airflow|insurance'   # gone
+kubectl get ns mlflow lakekeeper airflow insurance-retention       # NotFound
+kubectl get application wedding-site application-data data-platform -n argocd   # untouched
+kubectl get cluster postgres-data-platform -n data-platform        # READY (data safe)
+kubectl get backups.postgresql.cnpg.io -n data-platform | tail -2  # last backup Completed
+kubectl top nodes                                                  # memory reclaimed
+```
+
+Airflow's triggerer has a chart-default 100Gi `logs` PVC (`local-path`, Delete reclaim).
+It is freed when the `airflow` namespace is deleted and recreated fresh on un-park — it
+holds deferred-task heartbeat state, NOT task logs (those go to MinIO `airflow-logs`,
+which is kept). Losing it on park is harmless.
+
+**Un-park.** Set the flags back to `true` (enable `mlflow` + `lakekeeper` in the same
+commit as `insuranceRetention` — the chart guard rejects IR without them); push. ArgoCD
+recreates the bootstraps (ns + sealed secrets, wave 0), then the charts (wave 1), then
+`insurance-retention` (wave 2 — after its backends + the reflected
+`lakekeeper-s3-credentials`). Allow ~10 min (airflow runs its migration Job; the IR
+pod's startupProbe waits out the model load). Then verify:
+
+```bash
+kubectl get applications -n argocd | grep -E 'mlflow|lakekeeper|airflow|insurance'   # all Synced/Healthy
+```
+
+Two things resume on their own, by design: the Airflow admin user survives (it lives in
+CNPG Postgres, not the namespace — no need to re-run the admin setup script), and
+`insurance_retention_image_sensor` resumes its 15-min GHCR poll — if the image changed
+while parked, a training run auto-fires within ~15 min.
+
+**Rollback / stuck park.** The toggle is one commit — `git revert` it and push. If a
+namespace hangs in `Terminating` after a park (a finalizer stall, not data loss), clear
+it directly instead of reverting:
+`kubectl get ns <ns> -o json | jq '.spec.finalizers=[]' | kubectl replace --raw "/api/v1/namespaces/<ns>/finalize" -f -`
+
+**Adding an app to the switchboard.** Only stateless, non-load-bearing apps whose state
+lives in the platform base (CNPG/MinIO) qualify. Three edits:
+1. Drop the Application manifest(s) into `charts/demo-apps/applications/` (a bootstrap
+   pair travels together under one flag).
+2. Add an `enabled` stanza to `charts/demo-apps/values.yaml` — camelCase key if the name
+   has a hyphen (`insuranceRetention` <-> `insurance-retention`).
+3. Add a `{{- if .Values.<key>.enabled }} ... {{ .Files.Get "applications/<file>" }} ... {{- end }}`
+   block in `charts/demo-apps/templates/demo-applications.yaml`.
+Validate with `helm template charts/demo-apps --set <key>.enabled=true` before pushing.
+
 ## Lost master key
 
 If the master-key backup is unavailable, sealed secrets in Git become

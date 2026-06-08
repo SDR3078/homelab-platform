@@ -1,0 +1,44 @@
+# demo-apps — switchboard for the parkable portfolio/demo stack (MLOps showcase).
+#
+# One Application (synced by the root app-of-apps) pointing at charts/demo-apps,
+# whose values.yaml toggles each demo app on/off. Parking = set enabled:false →
+# this app renders fewer child Applications → ArgoCD prunes them and reclaims the
+# compute. The demo apps are STATELESS: their state lives in the KEPT platform base
+# (CNPG Postgres + MinIO), so re-enabling reconnects to intact data — nothing lost.
+# Full procedure: docs/rebuild.md → "Parking / un-parking demo apps".
+#
+# Stays at sync-wave "1" like the other app-of-apps entries; the child Applications
+# carry their own waves (bootstraps at 0, charts at 1, insurance-retention at 2).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo-apps
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/SDR3078/homelab-platform.git
+    targetRevision: main
+    path: charts/demo-apps
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

@@ -1,0 +1,21 @@
+# ── DEMO-APPS SWITCHBOARD ──────────────────────────────────────────────────────
+# Portfolio/showcase apps, parkable to reclaim compute on this single node.
+#   enabled: false  → ArgoCD prunes the app (pods + namespace gone).  RECLAIM.
+#   enabled: true   → ArgoCD re-syncs it from scratch.
+#
+# SAFE because every app here is STATELESS — its persistent state lives in the KEPT
+# platform base (CNPG Postgres + MinIO buckets), never in the app's own namespace.
+# Re-enabling reconnects to intact state; nothing is lost by parking.
+# Full procedure: docs/rebuild.md → "Parking / un-parking demo apps".
+#
+# RULE: only stateless, non-load-bearing demo apps belong here. NEVER gate a
+# PVC-owning (stateful) or load-bearing app this way — a prune could destroy data.
+#
+# KEYS are Go-template identifiers: use camelCase when the Application name has a
+# hyphen (insuranceRetention <-> Application "insurance-retention"); a bare hyphenated
+# key like `data-quality` breaks template field access.
+# ───────────────────────────────────────────────────────────────────────────────
+mlflow:             { enabled: false }   # experiment tracking + model registry (consumed only by insurance-retention)
+lakekeeper:         { enabled: false }   # Iceberg REST catalog                  (consumed only by insurance-retention)
+airflow:            { enabled: false }   # pipeline orchestrator                 (biggest single RAM reclaim)
+insuranceRetention: { enabled: false }   # FastAPI serving — REQUIRES mlflow + lakekeeper enabled

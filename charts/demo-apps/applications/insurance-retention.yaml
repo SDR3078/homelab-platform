@@ -26,7 +26,9 @@ metadata:
   name: insurance-retention
   namespace: argocd
   annotations:
-    argocd.argoproj.io/sync-wave: "1"
+    # wave 2: on re-enable, start AFTER its mlflow/lakekeeper backends (wave 1) and
+    # the reflected lakekeeper-s3-credentials are present (panel: k8s re-enable-ordering fix).
+    argocd.argoproj.io/sync-wave: "2"
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:

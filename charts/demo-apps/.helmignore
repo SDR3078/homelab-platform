@@ -1,0 +1,13 @@
+# Standard Helm packaging excludes.
+.DS_Store
+.git/
+.gitignore
+*.tmp
+*.bak
+*.swp
+*.orig
+
+# NOTE: applications/ is deliberately NOT ignored. Those Application manifests are
+# SOURCE DATA, pulled verbatim via {{ .Files.Get "applications/<file>" }} in
+# templates/demo-applications.yaml (so Helm never parses their upstream values
+# blocks). Adding applications/ here would make the switchboard render nothing.

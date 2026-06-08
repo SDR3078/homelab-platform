@@ -1,0 +1,10 @@
+apiVersion: v2
+name: demo-apps
+description: >-
+  Switchboard for portfolio/demo Applications (the MLOps showcase). Each flag in
+  values.yaml toggles a stateless demo app on/off; enabled:false makes ArgoCD prune
+  it (reclaiming compute), enabled:true re-syncs it. Only stateless, non-load-bearing
+  apps belong here — their data lives in the platform base (CNPG Postgres + MinIO).
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
