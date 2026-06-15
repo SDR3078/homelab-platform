@@ -1,0 +1,30 @@
+# portfolio-site namespace — Sander's personal portfolio site (Next.js web + FastAPI api)
+#
+# Two workloads: the public `web` frontend (the only thing fronted by an Ingress)
+# and an internal `api` (the streaming RAG chat backend, ClusterIP only — the web
+# pod proxies to it server-side via API_URL). Platform glue (this Namespace + the
+# groq-credentials and ghcr-pull SealedSecrets in this directory) is owned here and
+# applied by apps/portfolio-site-bootstrap.yaml; the container images come from this app's
+# own repo CI (ghcr.io/sdr3078/portfolio-site-{web,api}).
+#
+# Wildcard TLS: wildcard-lab-tls is reflected into this namespace by cert-manager —
+# requires appending 'portfolio-site' to the reflection lists in
+# charts/cert-manager/certificate-wildcard.yaml.
+#
+# PodSecurity 'restricted' is enforced; both images run as uid 1001, drop ALL
+# capabilities, no privilege escalation, seccomp RuntimeDefault.
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: portfolio-site
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  labels:
+    app.kubernetes.io/name: portfolio-site
+    app.kubernetes.io/part-of: homelab-platform
+    app.kubernetes.io/managed-by: argocd
+
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted

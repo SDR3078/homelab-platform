@@ -1,0 +1,49 @@
+# portfolio-site bootstrap — namespace + sealed secrets (in-repo platform glue)
+#
+# Layered under the portfolio-site workload Application (apps/portfolio-site.yaml).
+# Owns the cluster-side resources the helm chart depends on but does not declare:
+#   - Namespace 'portfolio-site' (declared in Git so PSA labels are first-class)
+#   - SealedSecret 'groq-credentials' (GROQ_API_KEY for the chat agent)
+#   - SealedSecret 'ghcr-pull' (dockerconfigjson for the private GHCR images)
+#
+# Split from apps/portfolio-site.yaml because the workload chart lives in a
+# different repository (github.com/SDR3078/portfolio-site, path helm/) with its
+# own CI lifecycle (image-tag bumps on every push). Same pattern as
+# apps/wedding-site-bootstrap.yaml.
+#
+# Sync-wave 0 — runs before the workload (wave 1). The chart's Deployments
+# reference both SealedSecrets (env GROQ_API_KEY + imagePullSecrets), so they must
+# materialize first; the sealed-secrets controller decrypts each on first reconcile.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: portfolio-site-bootstrap
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/SDR3078/homelab-platform.git
+    targetRevision: main
+    path: charts/portfolio-site
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: portfolio-site
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

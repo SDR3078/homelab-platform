@@ -1,0 +1,51 @@
+# portfolio-site — Sander's personal portfolio site (Next.js web + FastAPI api)
+#
+# Deploys the helm chart from the tenant repo:
+#   https://github.com/SDR3078/portfolio-site/tree/main/helm
+#
+# CI/CD: every push to main in the tenant repo builds + pushes
+# ghcr.io/sdr3078/portfolio-site-{web,api}:<sha> and bump-commits the new tags
+# into helm/values.yaml; ArgoCD detects the values change and rolls the pods.
+#
+# Cross-repo source — the tenant repo is PRIVATE, so ArgoCD authenticates via the
+# portfolio-site-repo credential in charts/argocd/portfolio-site-repo-sealed.yaml.
+# Image pulls require the 'ghcr-pull' SealedSecret in the namespace, materialized
+# by apps/portfolio-site-bootstrap.yaml (wave 0).
+#
+# Sync-wave 1 — runs after the bootstrap (wave 0) that provides the namespace +
+# sealed secrets the chart's pods depend on. Same split as wedding-site.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: portfolio-site
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/SDR3078/portfolio-site.git
+    targetRevision: main
+    path: helm
+    helm:
+      releaseName: portfolio-site
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: portfolio-site
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
