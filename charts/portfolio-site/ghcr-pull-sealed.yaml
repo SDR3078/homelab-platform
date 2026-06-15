@@ -1,0 +1,16 @@
+# GHCR image-pull credential for the private portfolio-site-{web,api} images (classic PAT, read:packages).
+# Reseal: bash ~/seal-ghcr-pull.sh
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: ghcr-pull
+  namespace: portfolio-site
+spec:
+  encryptedData:
+    .dockerconfigjson: AgCLGXxjI3rkxdtuaK70yDFK3gSOI4j+XnZE4zWLCyGJRTyAYTESBLSOGiPfAEst2VV2n8GWHgx8VdVe6mOST8sITcIsTcxg2vRLN5m697wTlenTMUy/5blhzI7Fch0GEhw8H5ct2XzVQkFegGb3WqHh1M5zl4oAbkujnF/tfX269Yi4modOPhCas87y023IYyxkBaedOA74aLZYYyPAbB2gI5zGw0kA+rTyVi6i78+W4qecCPPZpaHPnDNojhzAIZPc/wwGLfMHZ36L+9IYNwr6HDRdcF7fs+BC/ov8hU/wFG99bfFN7h6/rC05qs22I8o9weDEJmgf44NTvH0/mbAkZ+nI2UjuHYUJSuopYbL4JrIPq5co3szrPil0wO9Z7Pn/12K97UeyeIUaknd1b2utbyH2j9mT4I8ionUhE4xDr8JtalAQcdYsE0R18j9bK8jMzvRQCpdfb8kjJd8tSiRxxIlINtgjg6o5mTIhM4Y8ET/zEuJ40re+SrRbQcTOP5QlAB8J5QtwMbVk++HcTKViT/IGaAE6zh6EFAH15TMf17Ww7ORjuVw2uCVDvrrN+XgMMP/gh5PqOVJGil+pjaES6UWM4kEw7SKOXRKJFuufjqHqSCRTcc+pFugYvcfxa79nMP6brMzh5ibWagn9g6BZ2sCqXR9yKcz6aFP1+Cb9IoJ+0kdYmE8/Vw4JEIi5oR5T3k6iDQAjSl+bY1dSVWbDE/nrGkUVaTj0vknCuoFbV9NJAVS8fcLT74tv6ekjQXGfF212prwWC9B/078pGqo7cAfgzpeDjNdO5x0g//rAa0EgCBDu2YJiEGEHobzDUnmdcc6BIqoEjFho3Fx4315MqJGfku0hvDEbFdjJ7v4g/4sdMROH2c4q85hkJYIzHGQUSlNCWLUYQtVzopG7/+6JU7WEI045rP3Vihfu/UUQ91JSuX4s/+XtMDskL6lHDTwUr4Df2/36lS1oRPhE+Q==
+  template:
+    metadata:
+      name: ghcr-pull
+      namespace: portfolio-site
+    type: kubernetes.io/dockerconfigjson
