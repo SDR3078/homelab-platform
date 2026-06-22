@@ -24,7 +24,7 @@ metadata:
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
-  project: default
+  project: portfolio-site
 
   source:
     repoURL: https://github.com/SDR3078/homelab-platform.git
