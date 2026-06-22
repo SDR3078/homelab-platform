@@ -1,0 +1,41 @@
+# portfolio-site AppProject — scopes the two portfolio Applications
+# (apps/portfolio-site.yaml + apps/portfolio-site-bootstrap.yaml) off the
+# wide-open `default` project onto a least-privilege project.
+#
+# Applied by the argocd-config Application (apps/argocd-config.yaml, path
+# charts/argocd) into the argocd namespace. Must exist in-cluster BEFORE the two
+# Applications are flipped to project: portfolio-site (see commit 2).
+#
+# Allowlists are EXACT to what these apps deploy; adding a new kind to either
+# chart requires adding it here too, or the sync is rejected.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: portfolio-site
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: Sander's portfolio site (web + api) — bootstrap + workload apps
+  sourceRepos:
+    - https://github.com/SDR3078/homelab-platform.git
+    - https://github.com/SDR3078/portfolio-site.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: portfolio-site
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: bitnami.com
+      kind: SealedSecret
+    - group: apps
+      kind: Deployment
+    - group: ""
+      kind: Service
+    - group: networking.k8s.io
+      kind: Ingress
+    - group: networking.k8s.io
+      kind: NetworkPolicy
+  orphanedResources:
+    warn: true
