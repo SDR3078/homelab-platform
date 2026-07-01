@@ -76,3 +76,11 @@ To be populated as sessions progress:
       Turnstile bot-check (SealedSecrets, resealed via `kubeseal --merge-into`),
       and a DeepInfra chat backend. Platform-side lessons in the course notes
       (session-2026-07-01); app-side in the portfolio-site course folder.
+- [x] QuestSync CalDAV bridge as cluster app (2026-07-01) — public Habitica⇄Radicale
+      façade at https://tasks.batzbak.top. Stateless (no app secret — each user brings
+      their own Habitica creds), public GHCR image, exposed via the EXTERNAL cloudflared
+      tunnel → node ingress-nginx (a 4-expert panel chose reusing the LXC tunnel over a
+      new in-cluster one). Hardened to portfolio-site parity: least-privilege AppProject,
+      restricted PSA + seccomp, default-deny NetworkPolicy, pinned :sha image, dedicated
+      cert. The public app repo is kept generic; operator glue (ns/cert/ingress) lives in
+      `charts/questsync/`. Workload repo: https://github.com/SDR3078/questsync
