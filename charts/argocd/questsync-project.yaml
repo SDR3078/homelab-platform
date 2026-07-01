@@ -1,0 +1,44 @@
+# questsync AppProject — scopes the two questsync Applications
+# (apps/questsync-bootstrap.yaml + apps/questsync.yaml) onto a least-privilege
+# project instead of the wide-open `default`, mirroring portfolio-site-project.yaml.
+#
+# Applied by the argocd-config Application (apps/argocd-config.yaml, path
+# charts/argocd) into the argocd namespace. Must exist in-cluster BEFORE the two
+# Applications are synced with project: questsync — push this project first.
+#
+# NARROWER than portfolio-site's: NO bitnami.com/SealedSecret (QuestSync is stateless
+# and its GHCR image is public — there is no app secret and no image-pull secret).
+# Instead it whitelists cert-manager.io/Certificate for the dedicated tasks.batzbak.top
+# cert the bootstrap owns. Allowlists are EXACT to what these apps deploy; adding a new
+# kind to either chart requires adding it here too, or the sync is rejected.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: questsync
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: QuestSync — public Habitica<->Radicale CalDAV bridge (bootstrap + workload apps)
+  sourceRepos:
+    - https://github.com/SDR3078/homelab-platform.git
+    - https://github.com/SDR3078/questsync.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: questsync
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: cert-manager.io
+      kind: Certificate
+    - group: apps
+      kind: Deployment
+    - group: ""
+      kind: Service
+    - group: networking.k8s.io
+      kind: Ingress
+    - group: networking.k8s.io
+      kind: NetworkPolicy
+  orphanedResources:
+    warn: true

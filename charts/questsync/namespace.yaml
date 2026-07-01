@@ -1,0 +1,32 @@
+# questsync namespace — Habitica <-> Radicale CalDAV bridge (public, stateless).
+#
+# QuestSync is a read-through/write-through facade over the Habitica REST API:
+# Habitica is the sole source of truth, so this namespace holds NO PersistentVolume
+# and NO application SealedSecret — every user authenticates with their OWN Habitica
+# credentials (HTTP Basic auth on every request). Platform glue owned here = this
+# Namespace + the tasks.batzbak.top Certificate (certificate.yaml) + the Ingress
+# (ingress.yaml, operator-specific host — kept out of the public app repo); the workload
+# (Deployment/Service/NetworkPolicy) lives in the app repo's deploy/k8s Kustomize,
+# deployed by apps/questsync.yaml.
+#
+# TLS: unlike the other tenants, the public host (tasks.batzbak.top) is OUTSIDE the
+# *.lab.batzbak.top wildcard, so we issue a DEDICATED cert into this namespace
+# (certificate.yaml) rather than reflecting wildcard-lab-tls in. No reflector labels.
+#
+# PodSecurity 'restricted' is enforced: the pod runs as uid 1000, drops ALL
+# capabilities, no privilege escalation, seccomp RuntimeDefault.
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: questsync
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  labels:
+    app.kubernetes.io/name: questsync
+    app.kubernetes.io/part-of: homelab-platform
+    app.kubernetes.io/managed-by: argocd
+
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted

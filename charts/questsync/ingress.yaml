@@ -1,0 +1,37 @@
+# QuestSync Ingress — the operator-specific public entrypoint (tasks.batzbak.top).
+#
+# Kept HERE (platform repo) rather than in the public questsync app repo, so that repo
+# stays generic/reusable. Owned by the questsync-bootstrap Application (wave 0) alongside
+# the namespace + cert; the workload (Deployment/Service/NetworkPolicy) comes from the app
+# repo's deploy/k8s.
+#
+# TLS: references the dedicated 'tasks-batzbak-tls' cert (certificate.yaml). That real
+# Let's Encrypt cert lets the external cloudflared (in the LXC) verify THIS origin BY
+# HOSTNAME (originServerName: tasks.batzbak.top, noTLSVerify: false) at
+# https://192.168.68.50:443 — no plaintext/unverified hop for the per-request Habitica tokens.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: questsync
+  namespace: questsync
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    # Habitica's rate-limit backoff (app docs §6) can exceed nginx's default 60s timeouts.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "90"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "90"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: ["tasks.batzbak.top"]
+      secretName: tasks-batzbak-tls
+  rules:
+    - host: tasks.batzbak.top
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: questsync
+                port:
+                  number: 5232

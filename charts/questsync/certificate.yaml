@@ -1,0 +1,35 @@
+# Dedicated TLS certificate for the PUBLIC QuestSync host, tasks.batzbak.top.
+#
+# Why dedicated (not the reflected *.lab.batzbak.top wildcard): tasks.batzbak.top is
+# a bare-zone public name, deliberately kept OUT of the internal *.lab space, so the
+# wildcard's single label doesn't cover it. cert-manager issues this via the same
+# letsencrypt-production ClusterIssuer + Cloudflare DNS-01 solver (already scoped to
+# the whole batzbak.top zone), so no extra issuer wiring is needed. The ACME pipeline
+# is already proven by wildcard-lab-tls, so we go straight to production.
+#
+# The resulting Secret 'tasks-batzbak-tls' lands in THIS namespace and is consumed by
+# the workload Ingress (app repo: deploy/k8s/ingress.yaml). That real, browser-trusted
+# cert is what lets the LXC cloudflared verify the origin BY HOSTNAME
+# (originServerName: tasks.batzbak.top, noTLSVerify: false) — so the per-request
+# Habitica tokens never cross an unverified hop.
+
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: tasks-batzbak-tls
+  namespace: questsync
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  secretName: tasks-batzbak-tls
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer
+  dnsNames:
+    - "tasks.batzbak.top"
+  duration: 2160h      # 90d  — matches the wildcard cert's policy
+  renewBefore: 720h    # 30d
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always

@@ -1,0 +1,50 @@
+# questsync — public Habitica <-> Radicale CalDAV bridge (github.com/SDR3078/questsync).
+#
+# Deploys the Kustomize manifests from the tenant repo (deploy/k8s): a stateless
+# Radicale storage backend that is a live facade over the Habitica REST API. Multi-user
+# — each user authenticates with their own Habitica user-id + API token as HTTP Basic
+# auth on every request; there is NO server-side secret.
+#
+# Cross-repo source, but the repo AND the GHCR image are PUBLIC, so — unlike
+# wedding-site/portfolio-site — no ArgoCD repo credential and no ghcr-pull SealedSecret
+# are needed (HTTPS clone + public image). ArgoCD auto-detects the kustomization.yaml.
+#
+# Exposure: reachable at https://tasks.batzbak.top via the EXTERNAL cloudflared (in a
+# separate LXC) -> k3s node ingress-nginx (192.168.68.50:443) -> the Ingress
+# (charts/questsync/ingress.yaml) -> Service :5232. TLS mandatory (Habitica tokens ride in
+# Basic auth every request); the origin cert is the dedicated tasks-batzbak-tls.
+#
+# Sync-wave 1 — runs after the bootstrap (wave 0) that provides the namespace + cert.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: questsync
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: questsync
+
+  source:
+    repoURL: https://github.com/SDR3078/questsync.git
+    targetRevision: main
+    path: deploy/k8s
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: questsync
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
