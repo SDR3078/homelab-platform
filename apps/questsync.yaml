@@ -32,6 +32,44 @@ spec:
     targetRevision: main
     path: deploy/k8s
 
+    # ACCESS ALLOWLIST — injected platform-side so the PUBLIC app repo stays generic and
+    # CI's image auto-roll (which rewrites deploy/k8s/deployment.yaml) is untouched. Mounts
+    # the sealed roster (charts/questsync/allowlist-sealed.yaml -> Secret questsync-allowlist)
+    # at /etc/questsync/allowlist/users and turns on allowlist mode. JSON6902 with a 'test'
+    # op so an upstream container change fails the sync LOUDLY — an *unset* policy silently
+    # means allowall (fail-open), so this must never mis-patch open.
+    kustomize:
+      patches:
+        - target:
+            kind: Deployment
+            name: questsync
+          patch: |-
+            - op: test
+              path: /spec/template/spec/containers/0/name
+              value: questsync
+            - op: add
+              path: /spec/template/spec/containers/0/env/-
+              value:
+                name: QUESTSYNC_ACCESS_POLICY
+                value: allowlist
+            - op: add
+              path: /spec/template/spec/containers/0/env/-
+              value:
+                name: QUESTSYNC_ALLOWLIST_FILE
+                value: /etc/questsync/allowlist/users
+            - op: add
+              path: /spec/template/spec/containers/0/volumeMounts/-
+              value:
+                name: questsync-allowlist
+                mountPath: /etc/questsync/allowlist
+                readOnly: true
+            - op: add
+              path: /spec/template/spec/volumes/-
+              value:
+                name: questsync-allowlist
+                secret:
+                  secretName: questsync-allowlist
+
   destination:
     server: https://kubernetes.default.svc
     namespace: questsync
