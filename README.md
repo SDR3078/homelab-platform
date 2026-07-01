@@ -69,4 +69,10 @@ To be populated as sessions progress:
 - [ ] kube-prometheus-stack (next — the platform now runs blind; overdue)
 - [ ] Pipeline & model observability
 - [ ] LiteLLM + Langfuse + pgvector
-- [ ] Portfolio chatbot as cluster app
+- [x] Portfolio chatbot as cluster app (2026-06) — Next.js web + FastAPI
+      chat api, deployed on the wedding-site bootstrap+workload pattern from
+      a private cross-repo chart. Hardened with the cluster's first
+      least-privilege ArgoCD AppProject, a read-only GITHUB_TOKEN + Cloudflare
+      Turnstile bot-check (SealedSecrets, resealed via `kubeseal --merge-into`),
+      and a DeepInfra chat backend. Platform-side lessons in the course notes
+      (session-2026-07-01); app-side in the portfolio-site course folder.
