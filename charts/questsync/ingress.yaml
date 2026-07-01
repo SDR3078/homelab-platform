@@ -15,7 +15,7 @@ metadata:
   name: questsync
   namespace: questsync
   annotations:
-    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/sync-wave: "0"   # with ns + cert; do NOT gate behind cert issuance
     # Habitica's rate-limit backoff (app docs §6) can exceed nginx's default 60s timeouts.
     nginx.ingress.kubernetes.io/proxy-read-timeout: "90"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "90"
