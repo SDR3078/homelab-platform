@@ -1,0 +1,13 @@
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: questsync-allowlist
+  namespace: questsync
+spec:
+  encryptedData:
+    users: AgBNdgmRHhGIr7hwnbHH0nTQAj3wp6u/+k4VaevkXsOp5Fn8IUgySo0dUJOLfi31U2YzXt9R06JVGHr/cB7+70rs9P6IFnu4sEHTNwRCIYmmelFot5jozryl9C1oAh/7jRS9ByH5HXurQ4n2K2wFWbIQJKU5PTJ7m0bk/x/ADeb2gWRpHtjf8VSQzcdyuElTaCGnqb6u/mDZ1DNbPBbu/LhQeMCYS/Z1jkcTZV1LnodnhDwvGcZo5TQVrWOpoaoc9mOZ8baTh54Z5/EUi00VDOQciro9Dsz3MgYRMwloM/hnU+VvgxUb54Uo6NSYc3plQ38c1jg6R4wB3QKQrnK59Qy6+QxV6bJjbSzy4EbeOkgv304WuTrtRNhhD4xf0Ms/TED1+IMdhtlGcymgD9f5R3UI8EYHbNhDL+ZSIyjRo08l/hmhqXz7JkVFUKei+c1quFLW2HnohEWgODsv4jnBO6VgQGlQfe7zZOdKn3A6xcAJw9HIa1yrFEh1oloZ+5uUmKgPjfmuxJKDBHvfiHVBMSSCd2A/6EW7q56b9UNzhv9Zkq2cL5QJybIGwAtLrcXnEFWlMLLR9LYw8L6TNsccTwtoYg3NmonnGkKho4YTTRG5RvLj1e0JGHT3frw8PrA4e0tEItzwTf9qwwAYhX1n3L/uPF3vVu5CvaeinUy3bLoEt4PDkuildba8DyiM1irk4J/Dxm2KeT63QXUBJZBnbchpPUoSz2jmDT5dGhHj7Qhap/vTy7FR
+  template:
+    metadata:
+      name: questsync-allowlist
+      namespace: questsync
