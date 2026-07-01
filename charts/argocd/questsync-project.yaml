@@ -6,11 +6,12 @@
 # charts/argocd) into the argocd namespace. Must exist in-cluster BEFORE the two
 # Applications are synced with project: questsync — push this project first.
 #
-# NARROWER than portfolio-site's: NO bitnami.com/SealedSecret (QuestSync is stateless
-# and its GHCR image is public — there is no app secret and no image-pull secret).
-# Instead it whitelists cert-manager.io/Certificate for the dedicated tasks.batzbak.top
-# cert the bootstrap owns. Allowlists are EXACT to what these apps deploy; adding a new
-# kind to either chart requires adding it here too, or the sync is rejected.
+# Whitelists cert-manager.io/Certificate (the dedicated tasks.batzbak.top cert) and
+# bitnami.com/SealedSecret — the latter carries the ACCESS ALLOWLIST roster (Habitica
+# User IDs), sealed because this repo is PUBLIC (the IDs are identifiers, but the roster
+# is kept private). No image-pull secret (public GHCR image). Allowlists are EXACT to
+# what these apps deploy; adding a new kind to either chart requires adding it here too,
+# or the sync is rejected.
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
@@ -32,6 +33,8 @@ spec:
   namespaceResourceWhitelist:
     - group: cert-manager.io
       kind: Certificate
+    - group: bitnami.com
+      kind: SealedSecret
     - group: apps
       kind: Deployment
     - group: ""
