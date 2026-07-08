@@ -1,0 +1,26 @@
+# wardstone namespace — proprietary paid-access entitlement gate (PayPal <-> QuestSync).
+#
+# Platform glue owned in charts/wardstone (this ns + the wardstone-hooks.batzbak.top
+# Certificate + the operator Ingress + the SealedSecrets); the workload
+# (Deployment/Service/PVC/CronJob/NetworkPolicy) lives in the app repo's deploy/k8s
+# Kustomize, deployed by apps/wardstone.yaml.
+#
+# TLS: the public host wardstone-hooks.batzbak.top is OUTSIDE the *.lab.batzbak.top
+# wildcard, so we issue a DEDICATED cert into this namespace (certificate.yaml).
+#
+# PodSecurity 'restricted' is enforced: the pod runs non-root uid 1000, drops ALL
+# capabilities, no privilege escalation, seccomp RuntimeDefault, read-only rootfs.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: wardstone
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  labels:
+    app.kubernetes.io/name: wardstone
+    app.kubernetes.io/part-of: homelab-platform
+    app.kubernetes.io/managed-by: argocd
+
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted

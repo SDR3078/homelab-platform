@@ -1,0 +1,14 @@
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: ghcr-pull
+  namespace: wardstone
+spec:
+  encryptedData:
+    .dockerconfigjson: AgBojaiDBaQWDbwVJMFnJb/lEwsCnfWcYZOz85M8luz0gV2p5lCDHg//fL384rKSUqB/fv6FzvzyZNXCcD4UfJXg5r4Q74Sw3WlnbCdXua+eMKqvZ1jbYtPVjrJJRFgaLgVOLjdYSgnaqLXxRpiOu96guAzrCeiOyJUu8zJNlU0AZZnTLGi7UtvyD//chDnP1rUsfe/+c/5yt703zqUeROR3HCIb7KeXUpPY1NOpHsN9CHX6rG5dqOkFmi5mk2tU3iBDjmbCD/EVNKZYXfsJGRFq5BuNEPCNwntzUB9jcpfm8/BCxM9ybpIckokL98K55YXxxCtpIWl+QVYdKeSwcRAjgm7YcUZ4lWtVK5Bc3OrCe2cWG6lhtJZJQWNisD88U+6u4TW2FL3WacUi5p4zZCdhQGjcx4HG72n4y1uxSWaXyPYFpUKWfrrxKnDL+RhKC9mdtz4Kqtm1qURMPBTNgAL1vhjDgi53x8pv5GUeeIFI34frM/nnCcyN0cQ6dosvF8Md7kp2QreCFT/T/osICwrW0IcX0CAi1canX71xdHc1PoaEjFHgmX0a+bPHLt2pJUUfVefn9VHjQTsyptRw4rAzTWfrxCpPcuIOHi3EKZtmFp3c0TpTesba5X5hjHD8NBd09w0PUP3coRvv98Je4elKT3ohNCPqDXxQ4/5ePYSWBdoP3P3mG9h6sTEluPkszWFlgI5FRQTvsPEUZJctNOvRCf4HM/F3OwXfLjnSyGnhdsGFsrrhZRSZgjX9XLuhyShr9l2cwBVYkdey0xQc+hrvgZqoUpV7Q9GzcqVQfzUpwkRubrf0/0qop9UNm1spsZk2UHxEdYQGL+BbEQU/0X9kiBc1THldxSASiJTx/ObL1FqReMPh2noD6tZV0EYSMSo8nqmB8AQQST+EsI6k02SjOTU61GCn2JM4Ji/frjFzYGgO4Y0s89Cuwvb3zaLRYrg1IGYealZev1iwKvktFg==
+  template:
+    metadata:
+      name: ghcr-pull
+      namespace: wardstone
+    type: kubernetes.io/dockerconfigjson

@@ -1,0 +1,82 @@
+# wardstone — proprietary paid-access entitlement gate (github.com/SDR3078/wardstone, PRIVATE).
+#
+# Deploys the Kustomize manifests from the PRIVATE app repo (deploy/k8s): a stateful FastAPI
+# entitlement gate — SQLite on a 1Gi RWO PVC, single replica (Recreate), + a daily reconcile
+# CronJob. ArgoCD auto-detects the kustomization.yaml.
+#
+# Unlike public QuestSync, both the repo AND the image are private, so this needs:
+#   - an ArgoCD repo credential (charts/argocd/wardstone-repo-sealed.yaml, applied by argocd-config)
+#   - a ghcr-pull SealedSecret (charts/wardstone, wave 0) + imagePullSecrets injected below
+#     (the app repo's deployment.yaml declares none, so without this the pod ImagePullBackOffs)
+#
+# Injected platform-side (kustomize.patches) so the app repo stays generic and CI's image
+# auto-roll (which rewrites deploy/k8s/deployment.yaml) is untouched:
+#   1. imagePullSecrets: [ghcr-pull]   — private image pull
+#   2. the REAL sandbox PLAN_MAP        — replaces the app's P-CHANGEME placeholder (env[4])
+#   3. reloader annotation              — so the later webhook-id merge-in auto-rolls the pod
+# JSON6902 'test' ops guard the container name + PLAN_MAP env index, so upstream drift fails the
+# sync LOUDLY rather than silently mis-patching a money gate.
+#
+# Exposure: PayPal -> external cloudflared (LXC) -> ingress-nginx (192.168.68.50:443) ->
+# Ingress (charts/wardstone/ingress.yaml, ONLY /webhooks) -> Service :8080. /access + /admin
+# stay ClusterIP-internal (QuestSync reaches /access via service DNS; operator via port-forward).
+#
+# Sync-wave 1 — after the bootstrap (wave 0) provides the ns + cert + secrets.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: wardstone
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: wardstone
+
+  source:
+    repoURL: https://github.com/SDR3078/wardstone.git
+    targetRevision: main
+    path: deploy/k8s
+
+    # See header — injected platform-side so the app repo stays generic + CI-safe.
+    kustomize:
+      patches:
+        - target:
+            kind: Deployment
+            name: wardstone
+          patch: |-
+            - op: test
+              path: /spec/template/spec/containers/0/name
+              value: wardstone
+            - op: test
+              path: /spec/template/spec/containers/0/env/4/name
+              value: WARDSTONE_PAYPAL_PLAN_MAP
+            - op: replace
+              path: /spec/template/spec/containers/0/env/4/value
+              value: "P-7F239138M0464363LNJHE46I:questsync"
+            - op: add
+              path: /spec/template/spec/imagePullSecrets
+              value:
+                - name: ghcr-pull
+            - op: add
+              path: /metadata/annotations
+              value:
+                secret.reloader.stakater.com/reload: "wardstone-secrets"
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: wardstone
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

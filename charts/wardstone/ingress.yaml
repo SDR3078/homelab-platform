@@ -1,0 +1,48 @@
+# WardStone Ingress — the operator-specific public entrypoint (wardstone-hooks.batzbak.top).
+#
+# Kept HERE (platform repo), not the app repo, so that repo stays generic. Owned by the
+# wardstone-bootstrap Application (wave 0) alongside the namespace + cert; the workload
+# (Deployment/Service/PVC/CronJob/NetworkPolicy) comes from the app repo's deploy/k8s.
+#
+# THE ONLY PUBLIC DOOR, and it exposes ONLY /webhooks. There is deliberately NO path for
+# /access (the subscriber-oracle gate) or /admin (mutations + customer PII) — absent = not
+# routable from outside, so both stay ClusterIP-internal (QuestSync reaches /access via
+# service DNS; the operator reaches /admin via kubectl port-forward).
+#
+# TLS references the dedicated 'wardstone-hooks-tls' cert (certificate.yaml) so the LXC
+# cloudflared verifies this origin BY HOSTNAME (noTLSVerify: false) at https://192.168.68.50:443.
+#
+# Rate-limiting/WAF is deliberately NOT here: behind the cloudflared tunnel, ingress-nginx
+# sees the TUNNEL's source IP, so a per-IP limit-rps would bucket all PayPal traffic as one
+# client (throttling legit bursts, useless against a tunnelled attacker). The authoritative
+# rate-limit + WAF live at the Cloudflare EDGE (where PayPal's real IP is visible). Here we
+# only cap body size + read timeout, both IP-independent.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: wardstone-webhooks
+  namespace: wardstone
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"          # with ns + cert; do NOT gate behind cert issuance
+    # A cold-token webhook does OAuth (<=10s) + verify-signature (<=10s) of upstream httpx work;
+    # the app template's 15s would 504 mid-verify (PayPal reads that as retryable). 30s gives
+    # headroom without masking a genuinely hung upstream.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-body-size: "64k"     # PayPal webhooks are small; cap cheaply
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: ["wardstone-hooks.batzbak.top"]
+      secretName: wardstone-hooks-tls          # the dedicated cert from certificate.yaml
+  rules:
+    - host: wardstone-hooks.batzbak.top
+      http:
+        paths:
+          - path: /webhooks                     # ONLY this path — /access + /admin stay internal
+            pathType: Prefix
+            backend:
+              service:
+                name: wardstone
+                port:
+                  number: 8080

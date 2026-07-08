@@ -1,0 +1,32 @@
+# Dedicated TLS certificate for the PUBLIC WardStone webhook host, wardstone-hooks.batzbak.top.
+#
+# Why dedicated (not the reflected *.lab.batzbak.top wildcard): wardstone-hooks.batzbak.top is a
+# bare-zone public name, kept OUT of the internal *.lab space, so the wildcard's single label
+# doesn't cover it. cert-manager issues this via the letsencrypt-production ClusterIssuer +
+# Cloudflare DNS-01 solver (already scoped to the whole batzbak.top zone) — no extra issuer wiring.
+#
+# This is the ORIGIN cert (the cloudflared -> ingress-nginx hop). The resulting Secret
+# 'wardstone-hooks-tls' lands in THIS namespace and is consumed by the operator Ingress
+# (ingress.yaml). That real, browser-trusted cert lets the LXC cloudflared verify THIS origin
+# BY HOSTNAME (originServerName: wardstone-hooks.batzbak.top, noTLSVerify: false) at
+# https://192.168.68.50:443 — no unverified hop for the PayPal webhook traffic.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wardstone-hooks-tls
+  namespace: wardstone
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  secretName: wardstone-hooks-tls
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer
+  dnsNames:
+    - "wardstone-hooks.batzbak.top"
+  duration: 2160h      # 90d  — matches the wildcard cert's policy
+  renewBefore: 720h    # 30d
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always

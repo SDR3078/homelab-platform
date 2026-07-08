@@ -1,0 +1,48 @@
+# wardstone bootstrap — namespace + TLS cert + Ingress + SealedSecrets (in-repo platform glue).
+#
+# Layered under the wardstone workload Application (apps/wardstone.yaml). Owns the cluster-side
+# resources the app repo's Kustomize does NOT declare:
+#   - Namespace 'wardstone' (declared in Git so PSA 'restricted' labels are first-class)
+#   - Certificate 'wardstone-hooks-tls' (dedicated cert for the public webhook host)
+#   - Ingress 'wardstone-webhooks' (operator host wardstone-hooks.batzbak.top; ONLY /webhooks)
+#   - SealedSecret 'wardstone-secrets' (admin token + PayPal creds — Deployment envFrom + CronJob)
+#   - SealedSecret 'ghcr-pull' (private image pull)
+# Unlike QuestSync's stateless/public bootstrap, wardstone's carries the two SealedSecrets because
+# it is proprietary (private image) + has a server secret. The ArgoCD repo credential + the
+# AppProject live in charts/argocd (applied by argocd-config), not here.
+#
+# Sync-wave 0 — runs before the workload (wave 1): the Ingress consumes the cert Secret and the
+# Deployment's envFrom needs wardstone-secrets to exist, so ns + cert + secrets come first.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: wardstone-bootstrap
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: wardstone
+
+  source:
+    repoURL: https://github.com/SDR3078/homelab-platform.git
+    targetRevision: main
+    path: charts/wardstone
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: wardstone
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
