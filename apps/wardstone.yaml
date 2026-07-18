@@ -1,8 +1,8 @@
 # wardstone — proprietary paid-access entitlement gate (github.com/SDR3078/wardstone, PRIVATE).
 #
-# Deploys the Kustomize manifests from the PRIVATE app repo (deploy/k8s): a stateful FastAPI
-# entitlement gate — SQLite on a 1Gi RWO PVC, single replica (Recreate), + a daily reconcile
-# CronJob. ArgoCD auto-detects the kustomization.yaml.
+# Deploys the Kustomize manifests from the PRIVATE app repo (deploy/k8s): a FastAPI entitlement gate
+# backed by Postgres (a CNPG tenant of postgres-tenants), 2 replicas (RollingUpdate, no PVC), + a
+# daily reconcile CronJob. ArgoCD auto-detects the kustomization.yaml.
 #
 # Unlike public QuestSync, both the repo AND the image are private, so this needs:
 #   - an ArgoCD repo credential (charts/argocd/wardstone-repo-sealed.yaml, applied by argocd-config)
@@ -12,8 +12,10 @@
 # Injected platform-side (kustomize.patches) so the app repo stays generic and CI's image
 # auto-roll (which rewrites deploy/k8s/deployment.yaml) is untouched:
 #   1. imagePullSecrets: [ghcr-pull]   — private image pull
-#   2. the REAL sandbox PLAN_MAP        — replaces the app's P-CHANGEME placeholder (env[4])
-#   3. reloader annotation              — so the later webhook-id merge-in auto-rolls the pod
+#   2. the REAL sandbox PLAN_MAP        — replaces the app's P-CHANGEME placeholder (env[3])
+#   3. DB_USER/DB_PASSWORD + WARDSTONE_DATABASE_URL — the Postgres DSN, composed from the reflected
+#      wardstone-credentials secret (cluster-specifics stay platform-side; the app repo is agnostic)
+#   4. reloader annotation              — rolls the pod on wardstone-secrets / -credentials changes
 # JSON6902 'test' ops guard the container name + PLAN_MAP env index, so upstream drift fails the
 # sync LOUDLY rather than silently mis-patching a money gate.
 #
@@ -49,12 +51,34 @@ spec:
             - op: test
               path: /spec/template/spec/containers/0/name
               value: wardstone
+            # env index 3, not 4: the app dropped WARDSTONE_DB_PATH in the Postgres cutover. If a
+            # future base edit shifts it, this 'test' fails the sync LOUDLY rather than mis-patching.
             - op: test
-              path: /spec/template/spec/containers/0/env/4/name
+              path: /spec/template/spec/containers/0/env/3/name
               value: WARDSTONE_PAYPAL_PLAN_MAP
             - op: replace
-              path: /spec/template/spec/containers/0/env/4/value
+              path: /spec/template/spec/containers/0/env/3/value
               value: "P-7F239138M0464363LNJHE46I:questsync"
+            # DB wiring: DB_USER/DB_PASSWORD from the reflected CNPG credential, then the composed
+            # DSN. Appended IN ORDER so k8s $(VAR) substitution resolves — a value may only reference
+            # env vars defined earlier in the list. Password is hex (URL-safe), so no DSN escaping.
+            - op: add
+              path: /spec/template/spec/containers/0/env/-
+              value:
+                name: DB_USER
+                valueFrom:
+                  secretKeyRef: { name: wardstone-credentials, key: username }
+            - op: add
+              path: /spec/template/spec/containers/0/env/-
+              value:
+                name: DB_PASSWORD
+                valueFrom:
+                  secretKeyRef: { name: wardstone-credentials, key: password }
+            - op: add
+              path: /spec/template/spec/containers/0/env/-
+              value:
+                name: WARDSTONE_DATABASE_URL
+                value: "postgresql://$(DB_USER):$(DB_PASSWORD)@postgres-tenants-rw.application-data.svc.cluster.local:5432/wardstone?sslmode=require"
             - op: add
               path: /spec/template/spec/imagePullSecrets
               value:
@@ -62,7 +86,7 @@ spec:
             - op: add
               path: /metadata/annotations
               value:
-                secret.reloader.stakater.com/reload: "wardstone-secrets"
+                secret.reloader.stakater.com/reload: "wardstone-secrets,wardstone-credentials"
 
   destination:
     server: https://kubernetes.default.svc
