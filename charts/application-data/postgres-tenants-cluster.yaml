@@ -264,6 +264,11 @@ spec:
         login: true
         passwordSecret:
           name: wedding-credentials
+      - name: wardstone
+        ensure: present
+        login: true
+        passwordSecret:
+          name: wardstone-credentials
 
 # ────────────────────────────────────────────────────────────────────────
 # Per-database resources — declarative CREATE DATABASE
@@ -280,3 +285,14 @@ spec:
     name: postgres-tenants
   name: wedding         # actual database name (CREATE DATABASE wedding)
   owner: wedding        # role from managed.roles above
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: wardstone
+  namespace: application-data
+spec:
+  cluster:
+    name: postgres-tenants
+  name: wardstone       # actual database name (CREATE DATABASE wardstone)
+  owner: wardstone      # role from managed.roles above
