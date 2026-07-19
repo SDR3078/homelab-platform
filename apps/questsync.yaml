@@ -51,7 +51,12 @@ spec:
               path: /spec/template/spec/containers/0/env/-
               value:
                 name: QUESTSYNC_ACCESS_POLICY
-                value: allowlist
+                value: http
+            - op: add
+              path: /spec/template/spec/containers/0/env/-
+              value:
+                name: QUESTSYNC_ACCESS_HTTP_URL
+                value: http://wardstone.wardstone.svc.cluster.local:8080/access/questsync
             - op: add
               path: /spec/template/spec/containers/0/env/-
               value:
@@ -69,6 +74,25 @@ spec:
                 name: questsync-allowlist
                 secret:
                   secretName: questsync-allowlist
+        # Open QuestSync's egress to the WardStone gate (:8080 in the wardstone ns). Its base policy
+        # allows only DNS + 443, so without this the http access-check would only ever error transient.
+        - target:
+            kind: NetworkPolicy
+            name: questsync-allow
+          patch: |-
+            - op: test
+              path: /spec/podSelector/matchLabels/app
+              value: questsync
+            - op: add
+              path: /spec/egress/-
+              value:
+                to:
+                  - namespaceSelector:
+                      matchLabels: { kubernetes.io/metadata.name: wardstone }
+                    podSelector:
+                      matchLabels: { app: wardstone, role: web }
+                ports:
+                  - { protocol: TCP, port: 8080 }
 
   destination:
     server: https://kubernetes.default.svc
