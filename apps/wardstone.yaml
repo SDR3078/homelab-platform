@@ -12,7 +12,8 @@
 # Injected platform-side (kustomize.patches) so the app repo stays generic and CI's image
 # auto-roll (which rewrites deploy/k8s/deployment.yaml) is untouched:
 #   1. imagePullSecrets: [ghcr-pull]   — private image pull
-#   2. the REAL sandbox PLAN_MAP        — replaces the app's P-CHANGEME placeholder (env[3])
+#   2. LIVE PayPal API_BASE + PLAN_MAP  — replaces the app's sandbox default (env[2]) + P-CHANGEME
+#      placeholder (env[3]) with api-m.paypal.com and the live €1/mo plan
 #   3. DB_USER/DB_PASSWORD + WARDSTONE_DATABASE_URL — the Postgres DSN, composed from the reflected
 #      wardstone-credentials secret (cluster-specifics stay platform-side; the app repo is agnostic)
 #   4. reloader annotation              — rolls the pod on wardstone-secrets / -credentials changes
@@ -51,14 +52,21 @@ spec:
             - op: test
               path: /spec/template/spec/containers/0/name
               value: wardstone
-            # env index 3, not 4: the app dropped WARDSTONE_DB_PATH in the Postgres cutover. If a
-            # future base edit shifts it, this 'test' fails the sync LOUDLY rather than mis-patching.
+            # LIVE (go-live): flip the app repo's sandbox defaults to live PayPal. Base env indices
+            # (deploy/k8s/deployment.yaml): 2 = API_BASE, 3 = PLAN_MAP. The 'test' ops fail the sync
+            # LOUDLY if a base edit shifts an index, rather than silently mis-patching a money gate.
+            - op: test
+              path: /spec/template/spec/containers/0/env/2/name
+              value: WARDSTONE_PAYPAL_API_BASE
+            - op: replace
+              path: /spec/template/spec/containers/0/env/2/value
+              value: https://api-m.paypal.com
             - op: test
               path: /spec/template/spec/containers/0/env/3/name
               value: WARDSTONE_PAYPAL_PLAN_MAP
             - op: replace
               path: /spec/template/spec/containers/0/env/3/value
-              value: "P-7F239138M0464363LNJHE46I:questsync"
+              value: "P-4PB97377PF312135JNJOPKAA:questsync"
             # DB wiring: DB_USER/DB_PASSWORD from the reflected CNPG credential, then the composed
             # DSN. Appended IN ORDER so k8s $(VAR) substitution resolves — a value may only reference
             # env vars defined earlier in the list. Password is hex (URL-safe), so no DSN escaping.
