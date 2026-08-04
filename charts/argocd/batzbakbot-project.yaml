@@ -6,9 +6,16 @@
 # charts/argocd) into the argocd namespace. Must exist in-cluster BEFORE the two
 # Applications are synced with project: batzbakbot — push this project first.
 #
-# NARROWER than wardstone's project: no cert-manager.io/Certificate and no
-# networking.k8s.io/Ingress, because nothing here is exposed outside the cluster
-# — the WhatsApp bridge API is unauthenticated and stays ClusterIP-internal.
+# NARROWER than wardstone's project by one kind: no cert-manager.io/Certificate,
+# because whatsapp.lab.batzbak.top falls inside the *.lab.batzbak.top wildcard
+# and reuses the reflected wildcard-lab-tls rather than issuing its own.
+#
+# networking.k8s.io/Ingress IS whitelisted, for the bridge's management UI — but
+# that API has NO authentication of its own, so the Ingress is gated by nginx
+# basic auth (charts/batzbakbot/ingress.yaml + the whatsapp-basic-auth
+# SealedSecret). Dropping that annotation publishes full control of the paired
+# WhatsApp account to every address on the LAN.
+#
 # Carries core/PersistentVolumeClaim (bot state + the WhatsApp pairing) and
 # networking.k8s.io/NetworkPolicy (a default-deny plus one allow, since that
 # unauthenticated API would otherwise be reachable from all 30+ pods on the
@@ -43,5 +50,7 @@ spec:
       kind: PersistentVolumeClaim
     - group: networking.k8s.io
       kind: NetworkPolicy
+    - group: networking.k8s.io
+      kind: Ingress
   orphanedResources:
     warn: true

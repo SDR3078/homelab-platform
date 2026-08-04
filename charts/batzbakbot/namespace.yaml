@@ -5,11 +5,21 @@
 # the workload (PVCs/Deployments/Service/NetworkPolicies) lives in the app repo's
 # k8s/ Kustomize, deployed by apps/batzbakbot.yaml.
 #
-# No Ingress and no Certificate here, unlike wardstone: nothing in this namespace
-# is reachable from outside the cluster. The WhatsApp bridge API has NO
-# authentication whatsoever — it is full control of the paired account — so it
-# stays ClusterIP and is reached by port-forward. It was briefly exposed to the
-# LAN under compose (ports: 3000:3000 binds 0.0.0.0) and that is not repeated here.
+# One Ingress (ingress.yaml), no Certificate: whatsapp.lab.batzbak.top falls
+# inside the *.lab.batzbak.top wildcard, so it reuses the reflected
+# wildcard-lab-tls rather than issuing its own. batzbakbot was added to the
+# reflection lists in charts/cert-manager/certificate-wildcard.yaml.
+#
+# That Ingress publishes the bridge's management UI so pairing does not need a
+# port-forward — and it MUST keep its nginx basic-auth annotations. The API has
+# NO authentication of its own: /send/message, /send/image, the chat list and the
+# pairing UI are all open, so reaching the host at all is full control of the
+# paired account. lab.batzbak.top resolves on the LAN, and the host sits on a
+# /22. Compose commit c0158b2 closed exactly this hole once already, found by
+# fetching the paired device's real name and phone from another LAN address with
+# plain curl. The auth is at the edge rather than in the app because the bot
+# posts to /send/message over the ClusterIP Service with no credentials, so the
+# app's own -b flag would silently break every notification.
 #
 # PodSecurity 'restricted' is enforced and BOTH pods were verified against it:
 #   - batzbakbot runs as uid 10001 (the image's own USER)

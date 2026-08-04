@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# seal-secrets.sh — one-shot ceremony that seals ALL FOUR batzbakbot credentials
+# seal-secrets.sh — one-shot ceremony that seals ALL FIVE batzbakbot credentials
 # into GitOps. No secret ever touches disk-plaintext, argv, or shell history:
 # every value is read from a SILENT prompt and piped straight into kubeseal.
 # This script holds no secret and is safe to commit.
@@ -10,6 +10,7 @@
 #   charts/batzbakbot/ghcr-pull-sealed.yaml         batzbakbot ns — kubelet pulls the private image
 #   charts/batzbakbot/batzbakbot-config-sealed.yaml batzbakbot ns — the real config.yaml
 #   charts/batzbakbot/batzbakbot-secrets-sealed.yaml batzbakbot ns — proxy creds + admin phone
+#   charts/batzbakbot/whatsapp-basic-auth-sealed.yaml batzbakbot ns — gates the whatsapp Ingress
 #
 # WHY config.yaml is sealed and not a ConfigMap: it carries a real name, address,
 # birthday, e-mail and phone, and once AUTO_PURCHASE is on those exact values are
@@ -41,18 +42,19 @@ REPO_SEALED="charts/argocd/batzbakbot-repo-sealed.yaml"
 GHCR_SEALED="charts/batzbakbot/ghcr-pull-sealed.yaml"
 CONFIG_SEALED="charts/batzbakbot/batzbakbot-config-sealed.yaml"
 APP_SEALED="charts/batzbakbot/batzbakbot-secrets-sealed.yaml"
+AUTH_SEALED="charts/batzbakbot/whatsapp-basic-auth-sealed.yaml"
 # -----------------------------------------------------------------------------
 
 cd "$REPO_DIR"
-for bin in kubectl kubeseal curl; do
+for bin in kubectl kubeseal curl openssl; do
   command -v "$bin" >/dev/null || { echo "ERROR: '$bin' not in PATH." >&2; exit 1; }
 done
-trap 'unset REPO_PAT GHCR_PAT PROXY_CHECK PROXY_BUY ADMIN_PHONE 2>/dev/null || true' EXIT
+trap 'unset REPO_PAT GHCR_PAT PROXY_CHECK PROXY_BUY ADMIN_PHONE WA_PASS WA_PASS2 WA_HASH 2>/dev/null || true' EXIT
 
 seal() { kubeseal --controller-name="$CONTROLLER_NAME" --controller-namespace="$CONTROLLER_NS" -o yaml; }
 
-# === 1/4 · ArgoCD repo-clone credential (fine-grained PAT, Contents: Read) ====
-printf '[1/4] GitHub token for ArgoCD repo clone (fine-grained, Contents:Read on batzbakbot): '
+# === 1/5 · ArgoCD repo-clone credential (fine-grained PAT, Contents: Read) ====
+printf '[1/5] GitHub token for ArgoCD repo clone (fine-grained, Contents:Read on batzbakbot): '
 read -rs REPO_PAT; echo
 [[ -n "${REPO_PAT:-}" ]] || { echo "ERROR: empty token." >&2; exit 1; }
 echo "      validating against api.github.com ..."
@@ -68,7 +70,7 @@ kubectl create secret generic batzbakbot-repo -n argocd \
 | seal > "$REPO_SEALED"
 echo "      -> $REPO_SEALED"
 
-# === 2/4 · GHCR image-pull credential (classic read:packages) ================
+# === 2/5 · GHCR image-pull credential (classic read:packages) ================
 # REUSE the token already behind wardstone/portfolio-site/wedding's ghcr-pull.
 # GHCR tokens are user-wide, not repository-scoped, so the existing one already
 # pulls this image -- verified against the registry: an authenticated HEAD of
@@ -80,12 +82,12 @@ echo "      -> $REPO_SEALED"
 # the wildcard cert) -- a credential declared in Git should not depend on a
 # controller mirroring it at runtime.
 #
-# Contrast with [1/4]: that one is FINE-GRAINED and carries an explicit
+# Contrast with [1/5]: that one is FINE-GRAINED and carries an explicit
 # repository list, so wardstone's cannot be reused -- it answers 404 for
 # batzbakbot (GitHub returns 404 rather than 403 so as not to confirm a private
 # repo exists). Either add batzbakbot to an existing fine-grained token's list
 # or mint a new one.
-echo "[2/4] GHCR image-pull credential."
+echo "[2/5] GHCR image-pull credential."
 echo "      Press ENTER with no input to COPY the existing ghcr-pull from another"
 echo "      namespace (${GHCR_SOURCE_NS:-wardstone}) instead of retyping the token."
 printf '      GHCR token (classic, read:packages), or ENTER to copy: '
@@ -161,11 +163,11 @@ kubectl create secret docker-registry ghcr-pull -n "$APP_NS" \
 echo "      -> $GHCR_SEALED"
 fi
 
-# === 3/4 · the real config.yaml ==============================================
+# === 3/5 · the real config.yaml ==============================================
 # Read from the file rather than a prompt — it is multi-line YAML — but never
 # copied anywhere: --from-file streams it straight into the sealing pipe.
 CONFIG_SRC="${BATZBAKBOT_CONFIG:-$BOT_DIR/config.yaml}"
-echo "[3/4] config.yaml from: $CONFIG_SRC"
+echo "[3/5] config.yaml from: $CONFIG_SRC"
 [[ -r "$CONFIG_SRC" ]] || { echo "ERROR: cannot read $CONFIG_SRC (set BATZBAKBOT_CONFIG)." >&2; exit 1; }
 # A config missing the purchase fields would deploy a bot that reserves a real
 # ticket and then dies on the form, so refuse it here rather than at 03:00.
@@ -180,12 +182,12 @@ kubectl create secret generic batzbakbot-config -n "$APP_NS" \
 | seal > "$CONFIG_SEALED"
 echo "      -> $CONFIG_SEALED"
 
-# === 4/4 · proxy credentials + admin phone ===================================
+# === 4/5 · proxy credentials + admin phone ===================================
 # PROXY_CHECK carries the poll traffic and SHOULD rotate freely. PROXY_BUY
 # carries a purchase and MUST be sticky: one order spans an overview load, a
 # reservation and a form submit bound to a single PHPSESSID, so an exit that
 # rotates mid-flow breaks the session after a real ticket is already held.
-printf '[4/4] PROXY_CHECK (poll egress, scheme://user:pass@host:port; empty = direct): '
+printf '[4/5] PROXY_CHECK (poll egress, scheme://user:pass@host:port; empty = direct): '
 read -rs PROXY_CHECK; echo
 printf '      PROXY_BUY   (purchase egress, MUST carry _session- and _lifetime-): '
 read -rs PROXY_BUY; echo
@@ -208,6 +210,29 @@ kubectl create secret generic batzbakbot-secrets -n "$APP_NS" \
 | seal > "$APP_SEALED"
 echo "      -> $APP_SEALED"
 
+# === 5/5 · basic-auth for the whatsapp Ingress ===============================
+# The Ingress publishes an API with NO authentication of its own onto a
+# LAN-resolvable host, so nginx must gate it. htpasswd format, APR1 hashed by
+# openssl -- the password is never stored, only its hash, and the hash is what
+# gets sealed.
+printf '[5/5] username for https://whatsapp.lab.batzbak.top: '
+read -r WA_USER
+[[ -n "${WA_USER:-}" ]] || { echo "ERROR: empty username." >&2; exit 1; }
+printf '      password (not echoed): '; read -rs WA_PASS; echo
+printf '      repeat it: ';            read -rs WA_PASS2; echo
+[[ -n "${WA_PASS:-}" ]] || { echo "ERROR: empty password." >&2; exit 1; }
+[[ "$WA_PASS" == "$WA_PASS2" ]] || { echo "ERROR: passwords differ. Nothing sealed." >&2; exit 1; }
+# A weak one here is the whole control: this host is reachable from every
+# address on the /22.
+[[ ${#WA_PASS} -ge 12 ]] || { echo "ERROR: use at least 12 characters -- this is the only thing between the LAN and full control of the paired WhatsApp account." >&2; exit 1; }
+WA_HASH="$(openssl passwd -apr1 "$WA_PASS")"
+kubectl create secret generic whatsapp-basic-auth -n "$APP_NS" \
+  --from-literal=auth="${WA_USER}:${WA_HASH}" \
+  --dry-run=client -o yaml \
+| seal > "$AUTH_SEALED"
+unset WA_PASS WA_PASS2 WA_HASH
+echo "      -> $AUTH_SEALED"
+
 # --- sanity: each sealed file carries the expected encrypted keys -------------
 grep -q 'password'         "$REPO_SEALED"   || { echo "ERROR: repo seal incomplete." >&2; exit 1; }
 grep -q 'dockerconfigjson' "$GHCR_SEALED"   || { echo "ERROR: ghcr seal incomplete." >&2; exit 1; }
@@ -215,8 +240,9 @@ grep -q 'config.yaml'      "$CONFIG_SEALED" || { echo "ERROR: config seal incomp
 for k in PROXY_CHECK PROXY_BUY ADMIN_PHONE; do
   grep -q "$k" "$APP_SEALED" || { echo "ERROR: $k missing from $APP_SEALED." >&2; exit 1; }
 done
+grep -q 'auth' "$AUTH_SEALED" || { echo "ERROR: basic-auth seal incomplete." >&2; exit 1; }
 # Nothing plaintext must ever survive in these files.
-if grep -RqE '^[[:space:]]*(stringData|data):' "$REPO_SEALED" "$GHCR_SEALED" "$CONFIG_SEALED" "$APP_SEALED"; then
+if grep -RqE '^[[:space:]]*(stringData|data):' "$REPO_SEALED" "$GHCR_SEALED" "$CONFIG_SEALED" "$APP_SEALED" "$AUTH_SEALED"; then
   echo "ERROR: a plaintext data/stringData block survived sealing. DO NOT COMMIT." >&2
   exit 1
 fi

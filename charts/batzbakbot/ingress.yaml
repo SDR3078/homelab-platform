@@ -1,0 +1,57 @@
+# WhatsApp bridge management UI at https://whatsapp.lab.batzbak.top
+#
+# Exists so pairing does not need `kubectl port-forward`. Same shape as
+# charts/argocd/ingress.yaml: ingress-nginx terminates TLS with the reflected
+# wildcard-lab-tls Secret (batzbakbot was added to the reflection lists in
+# charts/cert-manager/certificate-wildcard.yaml).
+#
+# BASIC AUTH IS NOT OPTIONAL HERE, and this is the one thing to understand
+# before touching this file. ArgoCD's UI is safe on this domain because ArgoCD
+# has a login. This API has NONE: /send/message, /send/image, the chat list and
+# the pairing UI are all unauthenticated, so reaching the host at all is full
+# control of the paired WhatsApp account. lab.batzbak.top resolves on the LAN
+# (192.168.68.50) and the host sits on a /22, so publishing it without auth
+# would re-open exactly what compose commit c0158b2 closed -- that one was found
+# by fetching the paired device's real name and phone number from another LAN
+# address with plain curl, no exploit.
+#
+# The auth is at the EDGE, not in the app. The app does support -b user:pass,
+# but the bot posts to /send/message over the ClusterIP Service with no
+# credentials, so enabling it there would silently break every notification --
+# including the payment QR for a ticket already reserved. In-cluster access is
+# fenced separately by the NetworkPolicy in the app repo, which admits only the
+# bot pod.
+#
+# whatsapp-basic-auth is produced by seal-secrets.sh (step 5/5).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: whatsapp
+  namespace: batzbakbot
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/auth-type: basic
+    nginx.ingress.kubernetes.io/auth-secret: whatsapp-basic-auth
+    nginx.ingress.kubernetes.io/auth-realm: "batzbakbot whatsapp bridge"
+    # The pairing QR is a PNG and the dashboard bundle is ~1 MB; the default
+    # proxy buffers are fine, but the login endpoint can sit for the full QR
+    # lifetime, so do not let nginx cut it shorter than the QR is valid.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: whatsapp.lab.batzbak.top
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: whatsapp
+                port:
+                  number: 3000
+  tls:
+    - hosts:
+        - whatsapp.lab.batzbak.top
+      secretName: wildcard-lab-tls
