@@ -1,0 +1,13 @@
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: whatsapp-basic-auth
+  namespace: batzbakbot
+spec:
+  encryptedData:
+    auth: AgACXIyEpGYf3vFYRV9IS81efwm4T21QZ/yGIvXVjtToz8G/OgB61QFduX4mqBY1XMEmghOwK3fRRTRd5+Voxav680YQhwDPDcLnv3tjJoCnXbuUh5XfMpJa8LSbEN0KVC1XXlzr6ttwOPZdhEzejlJ4c5pU1u5LzVdp6svE0EjQPYdBNra+QXcBMMDU0zdkUTiKyo/XQO5DyYhbFmACDRrSfSgWiUThxW96rL2mDsqJhB3yTRPtkstCC7tKHON6a8evZjZNHSzNQGBVkMQBEkWzseOKxJhLl+g9kap1iUy+9bhGB9IGd1NHBGDQgRZhZEaKQpjwmvxIFFHVb6pQ0TJmk9SsA0m5OC+yZIW5j5bPuBUqysFjVUtCKvAt0B97JDGWi9j4O+Kj2oAYvgVadzadpT+zErxKp3J4hqslzt3/b73F8qtUbnqDRSK9TRKRdrOXWvBiAdFzZK9Gl7zRzqIEaia4N3z7Y+/0fMt9UYjMBsFN9LDxv0bI1fFW7U726EZTdbNpWEvahy3BVIj0TVWbQ3ghiW3xRuKaIQFFEE4S75NSy2N/ZPYXR22GjR/qpsbHWRnDmtxUdM+pBbeUKPL2VnlISbCZa5SGZ2kOqkFUpJlbAOulC1gPPRTVZpetqE0BkSl7fwccs9dkgOA1G3kRz8/EF1Xf2N/CG5t590wTqOiawoqnQG0fJ2cZxmGoaGKNW0nCLy70G13uE6P/R1YTJOj2tIM6lhdpzr1KW2dSJZpKzPVwiycPZaurTA==
+  template:
+    metadata:
+      name: whatsapp-basic-auth
+      namespace: batzbakbot

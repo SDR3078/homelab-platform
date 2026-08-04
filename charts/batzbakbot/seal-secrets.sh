@@ -53,22 +53,53 @@ trap 'unset REPO_PAT GHCR_PAT PROXY_CHECK PROXY_BUY ADMIN_PHONE WA_PASS WA_PASS2
 
 seal() { kubeseal --controller-name="$CONTROLLER_NAME" --controller-namespace="$CONTROLLER_NS" -o yaml; }
 
+# ENTER keeps whatever is already sealed. This script has to be re-runnable to
+# add ONE new credential without re-entering the others, and some of them cannot
+# be re-entered at all: GitHub displays a fine-grained PAT exactly once, so
+# demanding it again would mean revoking a working token purely to add an
+# unrelated secret. A step that is skipped leaves its existing file untouched.
+keep_or_die() {           # keep_or_die <sealed-file> <what-it-is>
+  if [[ -s "$1" ]]; then
+    echo "      nothing entered — keeping the existing seal: $1"
+    return 0
+  fi
+  echo "ERROR: nothing entered for $2, and there is no existing $1 to keep." >&2
+  echo "       This one has no fallback: it must be provided at least once." >&2
+  return 1
+}
+
+# For steps that collect SEVERAL values, a bare ENTER is ambiguous: an empty
+# PROXY_CHECK is itself a valid setting ("poll direct from this host"), so it
+# cannot double as "keep what is there". Those ask outright. -> 0 means collect.
+replace_existing() {      # replace_existing <sealed-file>
+  [[ -s "$1" ]] || return 0
+  local reply
+  printf '      (already sealed) ENTER keeps it, or type "new" to replace: '
+  read -r reply
+  [[ "$reply" == "new" ]]
+}
+
 # === 1/5 · ArgoCD repo-clone credential (fine-grained PAT, Contents: Read) ====
-printf '[1/5] GitHub token for ArgoCD repo clone (fine-grained, Contents:Read on batzbakbot): '
+echo "[1/5] ArgoCD repo-clone credential."
+[[ -s "$REPO_SEALED" ]] && echo "      (already sealed — press ENTER to keep it)"
+printf '      GitHub token (fine-grained, Contents:Read on batzbakbot), or ENTER: '
 read -rs REPO_PAT; echo
-[[ -n "${REPO_PAT:-}" ]] || { echo "ERROR: empty token." >&2; exit 1; }
-echo "      validating against api.github.com ..."
-code="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $REPO_PAT" \
-        -H "X-GitHub-Api-Version: 2022-11-28" https://api.github.com/rate_limit || echo 000)"
-[[ "$code" == "200" ]] || { echo "ERROR: token did not authenticate (HTTP $code). Nothing sealed." >&2; exit 1; }
-echo "      OK — authenticates."
-kubectl create secret generic batzbakbot-repo -n argocd \
-  --from-literal=type=git --from-literal=url="$REPO_URL" \
-  --from-literal=username="$GH_USER" --from-literal=password="$REPO_PAT" \
-  --dry-run=client -o yaml \
-| kubectl label --local -f - -o yaml argocd.argoproj.io/secret-type=repository \
-| seal > "$REPO_SEALED"
-echo "      -> $REPO_SEALED"
+if [[ -z "${REPO_PAT:-}" ]]; then
+  keep_or_die "$REPO_SEALED" "the ArgoCD repo credential" || exit 1
+else
+  echo "      validating against api.github.com ..."
+  code="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $REPO_PAT" \
+          -H "X-GitHub-Api-Version: 2022-11-28" https://api.github.com/rate_limit || echo 000)"
+  [[ "$code" == "200" ]] || { echo "ERROR: token did not authenticate (HTTP $code). Nothing sealed." >&2; exit 1; }
+  echo "      OK — authenticates."
+  kubectl create secret generic batzbakbot-repo -n argocd \
+    --from-literal=type=git --from-literal=url="$REPO_URL" \
+    --from-literal=username="$GH_USER" --from-literal=password="$REPO_PAT" \
+    --dry-run=client -o yaml \
+  | kubectl label --local -f - -o yaml argocd.argoproj.io/secret-type=repository \
+  | seal > "$REPO_SEALED"
+  echo "      -> $REPO_SEALED"
+fi
 
 # === 2/5 · GHCR image-pull credential (classic read:packages) ================
 # REUSE the token already behind wardstone/portfolio-site/wedding's ghcr-pull.
@@ -88,12 +119,18 @@ echo "      -> $REPO_SEALED"
 # repo exists). Either add batzbakbot to an existing fine-grained token's list
 # or mint a new one.
 echo "[2/5] GHCR image-pull credential."
-echo "      Press ENTER with no input to COPY the existing ghcr-pull from another"
-echo "      namespace (${GHCR_SOURCE_NS:-wardstone}) instead of retyping the token."
-printf '      GHCR token (classic, read:packages), or ENTER to copy: '
+if [[ -s "$GHCR_SEALED" ]]; then
+  echo "      (already sealed — press ENTER to keep it)"
+else
+  echo "      Press ENTER with no input to COPY the existing ghcr-pull from another"
+  echo "      namespace (${GHCR_SOURCE_NS:-wardstone}) instead of retyping the token."
+fi
+printf '      GHCR token (classic, read:packages), or ENTER: '
 read -rs GHCR_PAT; echo
 
-if [[ -z "${GHCR_PAT:-}" ]]; then
+if [[ -z "${GHCR_PAT:-}" && -s "$GHCR_SEALED" ]]; then
+  echo "      nothing entered — keeping the existing seal: $GHCR_SEALED"
+elif [[ -z "${GHCR_PAT:-}" ]]; then
   # The credential is already in the cluster. Re-key it into this namespace
   # rather than asking for a value nobody has written down: the whole Secret is
   # transformed in a pipe and re-sealed, so the token is never displayed, never
@@ -168,6 +205,14 @@ fi
 # copied anywhere: --from-file streams it straight into the sealing pipe.
 CONFIG_SRC="${BATZBAKBOT_CONFIG:-$BOT_DIR/config.yaml}"
 echo "[3/5] config.yaml from: $CONFIG_SRC"
+# Asks like the others even though it needs no secret typed, because re-sealing
+# is not free of consequence in a Git repo: sealed-secrets draws a fresh random
+# session key every time, so identical plaintext produces different ciphertext
+# and every run would rewrite this file with a diff that means nothing. Say
+# "new" when config.yaml has actually changed.
+if ! replace_existing "$CONFIG_SEALED"; then
+  echo "      keeping the existing seal: $CONFIG_SEALED"
+else
 [[ -r "$CONFIG_SRC" ]] || { echo "ERROR: cannot read $CONFIG_SRC (set BATZBAKBOT_CONFIG)." >&2; exit 1; }
 # A config missing the purchase fields would deploy a bot that reserves a real
 # ticket and then dies on the form, so refuse it here rather than at 03:00.
@@ -181,13 +226,18 @@ kubectl create secret generic batzbakbot-config -n "$APP_NS" \
   --dry-run=client -o yaml \
 | seal > "$CONFIG_SEALED"
 echo "      -> $CONFIG_SEALED"
+fi
 
 # === 4/5 · proxy credentials + admin phone ===================================
 # PROXY_CHECK carries the poll traffic and SHOULD rotate freely. PROXY_BUY
 # carries a purchase and MUST be sticky: one order spans an overview load, a
 # reservation and a form submit bound to a single PHPSESSID, so an exit that
 # rotates mid-flow breaks the session after a real ticket is already held.
-printf '[4/5] PROXY_CHECK (poll egress, scheme://user:pass@host:port; empty = direct): '
+echo "[4/5] proxy egresses + admin phone."
+if ! replace_existing "$APP_SEALED"; then
+  echo "      keeping the existing seal: $APP_SEALED"
+else
+printf '      PROXY_CHECK (poll egress, scheme://user:pass@host:port; empty = direct): '
 read -rs PROXY_CHECK; echo
 printf '      PROXY_BUY   (purchase egress, MUST carry _session- and _lifetime-): '
 read -rs PROXY_BUY; echo
@@ -209,13 +259,18 @@ kubectl create secret generic batzbakbot-secrets -n "$APP_NS" \
   --dry-run=client -o yaml \
 | seal > "$APP_SEALED"
 echo "      -> $APP_SEALED"
+fi
 
 # === 5/5 · basic-auth for the whatsapp Ingress ===============================
 # The Ingress publishes an API with NO authentication of its own onto a
 # LAN-resolvable host, so nginx must gate it. htpasswd format, APR1 hashed by
 # openssl -- the password is never stored, only its hash, and the hash is what
 # gets sealed.
-printf '[5/5] username for https://whatsapp.lab.batzbak.top: '
+echo "[5/5] basic-auth for https://whatsapp.lab.batzbak.top"
+if ! replace_existing "$AUTH_SEALED"; then
+  echo "      keeping the existing seal: $AUTH_SEALED"
+else
+printf '      username: '
 read -r WA_USER
 [[ -n "${WA_USER:-}" ]] || { echo "ERROR: empty username." >&2; exit 1; }
 printf '      password (not echoed): '; read -rs WA_PASS; echo
@@ -235,6 +290,7 @@ kubectl create secret generic whatsapp-basic-auth -n "$APP_NS" \
 | seal > "$AUTH_SEALED"
 unset WA_PASS WA_PASS2 WA_HASH
 echo "      -> $AUTH_SEALED"
+fi
 
 # --- sanity: each sealed file carries the expected encrypted keys -------------
 grep -q 'password'         "$REPO_SEALED"   || { echo "ERROR: repo seal incomplete." >&2; exit 1; }
@@ -254,7 +310,7 @@ cat <<'EOF'
 
 Sealed. NEXT STEPS
 
-  1. Review the four files, then commit + push them. They are encrypted to THIS
+  1. Review the five files, then commit + push them. They are encrypted to THIS
      cluster's controller key and are useless to anyone else.
 
   2. Push charts/argocd/batzbakbot-project.yaml FIRST (or at least in the same
