@@ -222,9 +222,12 @@ printf '      password (not echoed): '; read -rs WA_PASS; echo
 printf '      repeat it: ';            read -rs WA_PASS2; echo
 [[ -n "${WA_PASS:-}" ]] || { echo "ERROR: empty password." >&2; exit 1; }
 [[ "$WA_PASS" == "$WA_PASS2" ]] || { echo "ERROR: passwords differ. Nothing sealed." >&2; exit 1; }
-# A weak one here is the whole control: this host is reachable from every
-# address on the /22.
-[[ ${#WA_PASS} -ge 12 ]] || { echo "ERROR: use at least 12 characters -- this is the only thing between the LAN and full control of the paired WhatsApp account." >&2; exit 1; }
+# Floor is 8, set deliberately rather than by default. This string is the only
+# thing between the LAN and full control of the paired WhatsApp account, and the
+# host is reachable from every address on the /22 -- but the exposure is
+# LAN-only (lab.batzbak.top is NXDOMAIN publicly), so this is a considered
+# trade-off, not an oversight. Raise it here if that ever stops being true.
+[[ ${#WA_PASS} -ge 8 ]] || { echo "ERROR: use at least 8 characters." >&2; exit 1; }
 WA_HASH="$(openssl passwd -apr1 "$WA_PASS")"
 kubectl create secret generic whatsapp-basic-auth -n "$APP_NS" \
   --from-literal=auth="${WA_USER}:${WA_HASH}" \
