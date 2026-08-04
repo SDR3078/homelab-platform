@@ -1,0 +1,53 @@
+# batzbakbot bootstrap — namespace + SealedSecrets (in-repo platform glue).
+#
+# Layered under the batzbakbot workload Application (apps/batzbakbot.yaml). Owns
+# the cluster-side resources the app repo's Kustomize does NOT declare:
+#   - Namespace 'batzbakbot' (declared in Git so PSA 'restricted' labels are
+#     first-class, and because two owners for one Namespace is a permanent
+#     OutOfSync)
+#   - SealedSecret 'ghcr-pull'          (private image pull)
+#   - SealedSecret 'batzbakbot-config'  (the real config.yaml: name, address,
+#     birthday — what a live order is submitted with)
+#   - SealedSecret 'batzbakbot-secrets' (IPRoyal proxy creds + admin phone)
+# All four are produced by charts/batzbakbot/seal-secrets.sh.
+#
+# No Ingress and no Certificate, unlike wardstone: nothing here is exposed
+# outside the cluster. The WhatsApp bridge API has no authentication at all and
+# stays ClusterIP; pair it by port-forward.
+#
+# Sync-wave 0 — runs before the workload (wave 1): the pod mounts
+# batzbakbot-config, reads batzbakbot-secrets via envFrom and is pulled with
+# ghcr-pull, so all three must exist first, and the namespace before them.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: batzbakbot-bootstrap
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: batzbakbot
+
+  source:
+    repoURL: https://github.com/SDR3078/homelab-platform.git
+    targetRevision: main
+    path: charts/batzbakbot
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: batzbakbot
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

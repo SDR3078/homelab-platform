@@ -1,0 +1,36 @@
+# batzbakbot namespace — watches the Pukkelpop meetup exchange and can buy a
+# ticket (github.com/SDR3078/batzbakbot, PRIVATE).
+#
+# Platform glue owned in charts/batzbakbot (this ns + the three SealedSecrets);
+# the workload (PVCs/Deployments/Service/NetworkPolicies) lives in the app repo's
+# k8s/ Kustomize, deployed by apps/batzbakbot.yaml.
+#
+# No Ingress and no Certificate here, unlike wardstone: nothing in this namespace
+# is reachable from outside the cluster. The WhatsApp bridge API has NO
+# authentication whatsoever — it is full control of the paired account — so it
+# stays ClusterIP and is reached by port-forward. It was briefly exposed to the
+# LAN under compose (ports: 3000:3000 binds 0.0.0.0) and that is not repeated here.
+#
+# PodSecurity 'restricted' is enforced and BOTH pods were verified against it:
+#   - batzbakbot runs as uid 10001 (the image's own USER)
+#   - whatsapp runs as uid 20001 (gowauser). Its image's entrypoint deliberately
+#     starts as ROOT to mkdir/chown /app/storages + /app/statics before dropping
+#     via su-exec, which 'restricted' forbids — forcing a non-root uid onto it
+#     fails with "su-exec: setgroups: Operation not permitted" and the container
+#     exits immediately. The app repo's manifest therefore bypasses the
+#     entrypoint and lets Kubernetes do those two jobs (fsGroup + an emptyDir).
+#     Verified end to end: device registered, pairing QR written.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: batzbakbot
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  labels:
+    app.kubernetes.io/name: batzbakbot
+    app.kubernetes.io/part-of: homelab-platform
+    app.kubernetes.io/managed-by: argocd
+
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted

@@ -1,0 +1,72 @@
+# batzbakbot — watches the Pukkelpop meetup ticket exchange and can buy a ticket
+# (github.com/SDR3078/batzbakbot, PRIVATE).
+#
+# Deploys the Kustomize manifests from the PRIVATE app repo (k8s/): the bot
+# (single replica, Recreate) plus the go-whatsapp-web-multidevice bridge that
+# delivers the payment QR, two PVCs, a ClusterIP Service and two NetworkPolicies.
+# ArgoCD auto-detects k8s/kustomization.yaml.
+#
+# Both the repo AND the image are private, so this needs:
+#   - an ArgoCD repo credential (charts/argocd/batzbakbot-repo-sealed.yaml,
+#     applied by argocd-config) — without it the Application simply never syncs,
+#     which is the quiet failure; ImagePullBackOff is the loud one
+#   - a ghcr-pull SealedSecret (charts/batzbakbot, wave 0). Unlike wardstone this
+#     is NOT injected here: the app repo's own manifest declares
+#     imagePullSecrets, because it is useless without it in any environment.
+#
+# NOTHING is patched platform-side. The app repo carries the full workload and
+# every cluster-specific value arrives through the wave-0 SealedSecrets, so there
+# are no JSON6902 index guards to drift. The image tag is bumped by the app
+# repo's own CI (.github/workflows/image.yaml) rewriting k8s/kustomization.yaml,
+# and that commit is what triggers the rollout.
+#
+# targetRevision is MASTER, not main. The app repo predates this platform's
+# convention and its default branch is master; the CI workflow pushes there too.
+# Renaming the branch means changing both, so it is left alone and called out.
+#
+# NOT auto-synced on purpose — see syncPolicy.
+#
+# Sync-wave 1 — after the bootstrap (wave 0) provides the ns + the three secrets.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: batzbakbot
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: batzbakbot
+
+  source:
+    repoURL: https://github.com/SDR3078/batzbakbot.git
+    targetRevision: master
+    path: k8s
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: batzbakbot
+
+  syncPolicy:
+    # DELIBERATELY manual, unlike every other app in this repo.
+    #
+    # This workload spends money and takes real tickets off a public exchange:
+    # opening a buy link reserves one for ~30 minutes for everybody, and with
+    # AUTO_PURCHASE on it submits an order in a real name. selfHeal + prune would
+    # mean a CI image bump rolls the pod unattended — and a roll that lands
+    # between reserving a ticket and delivering its payment QR orphans that
+    # ticket with no way to pay for it. terminationGracePeriodSeconds 180 makes
+    # that unlikely, not impossible.
+    #
+    # So syncs are a human decision: `argocd app sync batzbakbot`, or the UI.
+    # Turn automated on once the purchase path has a track record longer than the
+    # single live order it has today.
+    syncOptions:
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
