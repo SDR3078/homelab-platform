@@ -85,9 +85,59 @@ echo "      -> $REPO_SEALED"
 # batzbakbot (GitHub returns 404 rather than 403 so as not to confirm a private
 # repo exists). Either add batzbakbot to an existing fine-grained token's list
 # or mint a new one.
-printf '[2/4] GitHub token for GHCR image pull (classic, read:packages -- the SAME one already used by wardstone/wedding/portfolio-site works): '
+echo "[2/4] GHCR image-pull credential."
+echo "      Press ENTER with no input to COPY the existing ghcr-pull from another"
+echo "      namespace (${GHCR_SOURCE_NS:-wardstone}) instead of retyping the token."
+printf '      GHCR token (classic, read:packages), or ENTER to copy: '
 read -rs GHCR_PAT; echo
-[[ -n "${GHCR_PAT:-}" ]] || { echo "ERROR: empty token." >&2; exit 1; }
+
+if [[ -z "${GHCR_PAT:-}" ]]; then
+  # The credential is already in the cluster. Re-key it into this namespace
+  # rather than asking for a value nobody has written down: the whole Secret is
+  # transformed in a pipe and re-sealed, so the token is never displayed, never
+  # reaches argv, and never lands on disk in plaintext. A forgotten token is a
+  # bad reason to mint a second one -- more copies of a credential is strictly
+  # worse than reusing the one that already works.
+  SRC_NS="${GHCR_SOURCE_NS:-wardstone}"
+  echo "      copying $SRC_NS/ghcr-pull -> $APP_NS/ghcr-pull (value never shown)"
+  kubectl -n "$SRC_NS" get secret ghcr-pull -o json >/dev/null 2>&1 \
+    || { echo "ERROR: no ghcr-pull in namespace '$SRC_NS'. Set GHCR_SOURCE_NS." >&2; exit 1; }
+
+  # Verify the COPIED credential can pull this image before sealing it, exactly
+  # as the typed path does. Decoded inside python and never echoed.
+  echo "      verifying it can pull ghcr.io/sdr3078/batzbakbot ..."
+  kubectl -n "$SRC_NS" get secret ghcr-pull -o json | python3 -c '
+import base64, json, sys, urllib.request
+src = json.load(sys.stdin)
+auths = json.loads(base64.b64decode(src["data"][".dockerconfigjson"]))["auths"]["ghcr.io"]
+if "auth" in auths:
+    user, _, pw = base64.b64decode(auths["auth"]).decode().partition(":")
+else:
+    user, pw = auths.get("username", ""), auths.get("password", "")
+basic = base64.b64encode(f"{user}:{pw}".encode()).decode()
+req = urllib.request.Request(
+    "https://ghcr.io/token?service=ghcr.io&scope=repository:sdr3078/batzbakbot:pull",
+    headers={"Authorization": "Basic " + basic})
+tok = json.load(urllib.request.urlopen(req, timeout=20))["token"]
+req = urllib.request.Request(
+    "https://ghcr.io/v2/sdr3078/batzbakbot/manifests/latest", method="HEAD",
+    headers={"Authorization": "Bearer " + tok,
+             "Accept": "application/vnd.oci.image.index.v1+json,"
+                       "application/vnd.docker.distribution.manifest.list.v2+json"})
+if urllib.request.urlopen(req, timeout=20).status != 200:
+    sys.exit("cannot pull the image with this credential")
+# Same secret, new namespace. Server-populated metadata is dropped so ArgoCD
+# does not try to reconcile a uid/resourceVersion from another object.
+out = {"apiVersion": "v1", "kind": "Secret", "type": src["type"],
+       "metadata": {"name": "ghcr-pull", "namespace": "'"$APP_NS"'"},
+       "data": src["data"]}
+json.dump(out, open("/tmp/ghcr-copy.json", "w"))
+' || { echo "ERROR: the existing credential cannot pull this image. Nothing sealed." >&2; exit 1; }
+  echo "      OK — pulled the manifest."
+  seal < /tmp/ghcr-copy.json > "$GHCR_SEALED"
+  shred -u /tmp/ghcr-copy.json 2>/dev/null || rm -f /tmp/ghcr-copy.json
+  echo "      -> $GHCR_SEALED"
+else
 echo "      verifying it can actually pull this image ..."
 ghcr_tok="$(curl -s -u "$GH_USER:$GHCR_PAT" \
   'https://ghcr.io/token?service=ghcr.io&scope=repository:sdr3078/batzbakbot:pull' \
@@ -109,6 +159,7 @@ kubectl create secret docker-registry ghcr-pull -n "$APP_NS" \
   --dry-run=client -o yaml \
 | seal > "$GHCR_SEALED"
 echo "      -> $GHCR_SEALED"
+fi
 
 # === 3/4 · the real config.yaml ==============================================
 # Read from the file rather than a prompt — it is multi-line YAML — but never
