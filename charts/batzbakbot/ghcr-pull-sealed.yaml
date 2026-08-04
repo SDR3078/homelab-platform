@@ -1,0 +1,14 @@
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: ghcr-pull
+  namespace: batzbakbot
+spec:
+  encryptedData:
+    .dockerconfigjson: AgB8UlrVWK/PkkeWybci5NnIChnNXhF66WK4gZ0xF8gnJ+hxn4rXs60ZY1rEPmv7dXAnmAR1LQBRxUwPZN7M3QSQgwzfMM2SVGrleP/QS0AFlwDkfDnUNfV/3fnY4YkRumQOkMeC70RtOfrX3dZ61qHmvMi9xF029kthHi+XJRg1yzy/8uOv8Gc5cmbrMi2XrUpPCNbqGq18yxHTeoU1lwGRqSZbTeF01X9vfKZcYhZXHvsC3R12ZOIYARV6CViRm+n1eDZpEy+9hnCQ1YLTnADgIIce47VcylXr9bgLzBoEVaXOGbfqYo5CBB8mRgi6PTj6SsfAZi+8ontWPfriSih4m4rHdHOvo9V6Pj9W2Qww2/1K/0gXQ1fZViPkxW0gttVXDqTO1CzjVQHz/x9VzXqHrkDUPOnG/G5eWQp+EkMMIz5nsuj0IzLNdHD8hGPURGgtDSQMXGgZbWlhTC1FfHxLH22z0XouhYwlApxbuIV4AIMyViI/GsdH2cbekOgV6vjGYBgcxzr9oENKzDngk6L2oU+acECiuLkWwDPBiwVuQQzW08W/dlM93+1btGYxE2hE1fKrtu4ZWnpeFzn1RYKhvQMOPa7x0lJg/s+LDlSy7lxFHx8ekSMNxvcU9gmjMd/4TIGM4XNV+nqeS7PGwC/79WAFyfceYLy8fPrGSSxB2CnHMzNaoe1ETHkrcjVxAOKtAV5zDuKx1ViN9Hbq32xINTQZ1oUqGmNqR6mpGJMtZQ/Mukgypi/1rqh7HqZaoit3bXYozHchSMeJ3BlNaFTifLDyoWvxAZ8kgQod7Rvuaw68vzpda/i2UI1EuxSYzGd29JBvLauOot8D702ZfbUcX37cL0b8Za9BBE7u3TQwkPMNmkI9EUBq4mwE12GTOzUfnv/poiKy34whpST+cCmABxKXbiYyIjLqn5DGlW3Q+XI3q1wbU4PoNyexLGwgq93WduuUtADfAT7uLJWhAQ==
+  template:
+    metadata:
+      name: ghcr-pull
+      namespace: batzbakbot
+    type: kubernetes.io/dockerconfigjson
