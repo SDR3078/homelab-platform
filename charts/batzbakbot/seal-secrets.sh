@@ -68,10 +68,41 @@ kubectl create secret generic batzbakbot-repo -n argocd \
 | seal > "$REPO_SEALED"
 echo "      -> $REPO_SEALED"
 
-# === 2/4 · GHCR image-pull credential (classic read:packages recommended) =====
-printf '[2/4] GitHub token for GHCR image pull (classic read:packages; paste #1 again to try one token): '
+# === 2/4 · GHCR image-pull credential (classic read:packages) ================
+# REUSE the token already behind wardstone/portfolio-site/wedding's ghcr-pull.
+# GHCR tokens are user-wide, not repository-scoped, so the existing one already
+# pulls this image -- verified against the registry: an authenticated HEAD of
+# ghcr.io/v2/sdr3078/batzbakbot/manifests/latest returned 200 with it.
+#
+# It still needs its own sealed copy here because Secrets are namespaced and
+# this platform seals ghcr-pull per namespace rather than reflecting it.
+# Reflector is in use, but for cluster-GENERATED secrets (the CNPG credentials,
+# the wildcard cert) -- a credential declared in Git should not depend on a
+# controller mirroring it at runtime.
+#
+# Contrast with [1/4]: that one is FINE-GRAINED and carries an explicit
+# repository list, so wardstone's cannot be reused -- it answers 404 for
+# batzbakbot (GitHub returns 404 rather than 403 so as not to confirm a private
+# repo exists). Either add batzbakbot to an existing fine-grained token's list
+# or mint a new one.
+printf '[2/4] GitHub token for GHCR image pull (classic, read:packages -- the SAME one already used by wardstone/wedding/portfolio-site works): '
 read -rs GHCR_PAT; echo
 [[ -n "${GHCR_PAT:-}" ]] || { echo "ERROR: empty token." >&2; exit 1; }
+echo "      verifying it can actually pull this image ..."
+ghcr_tok="$(curl -s -u "$GH_USER:$GHCR_PAT" \
+  'https://ghcr.io/token?service=ghcr.io&scope=repository:sdr3078/batzbakbot:pull' \
+  | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
+ghcr_code="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer ${ghcr_tok:-none}" \
+  -H 'Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json' \
+  https://ghcr.io/v2/sdr3078/batzbakbot/manifests/latest || echo 000)"
+if [[ "$ghcr_code" != "200" ]]; then
+  echo "ERROR: this token cannot pull ghcr.io/sdr3078/batzbakbot (HTTP $ghcr_code)." >&2
+  echo "       Needs a CLASSIC token with read:packages. A wrong one here does not fail" >&2
+  echo "       until the pod ImagePullBackOffs on the cluster. Nothing sealed." >&2
+  exit 1
+fi
+echo "      OK — pulled the manifest (HTTP 200)."
+unset ghcr_tok ghcr_code
 kubectl create secret docker-registry ghcr-pull -n "$APP_NS" \
   --docker-server=ghcr.io --docker-username="$GH_USER" \
   --docker-password="$GHCR_PAT" --docker-email="$GH_EMAIL" \
