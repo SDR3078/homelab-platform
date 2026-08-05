@@ -3,13 +3,19 @@
 #   enabled: false  → ArgoCD prunes the app (pods + namespace gone).  RECLAIM.
 #   enabled: true   → ArgoCD re-syncs it from scratch.
 #
-# SAFE because every app here is STATELESS — its persistent state lives in the KEPT
-# platform base (CNPG Postgres + MinIO buckets), never in the app's own namespace.
-# Re-enabling reconnects to intact state; nothing is lost by parking.
+# SAFE FOR THE MLOPS FOUR because they are STATELESS — their persistent state lives in
+# the KEPT platform base (CNPG Postgres + MinIO buckets), never in the app's own
+# namespace. Re-enabling reconnects to intact state; nothing is lost by parking those.
 # Full procedure: docs/rebuild.md → "Parking / un-parking demo apps".
 #
 # RULE: only stateless, non-load-bearing demo apps belong here. NEVER gate a
 # PVC-owning (stateful) or load-bearing app this way — a prune could destroy data.
+#
+# ONE DELIBERATE EXCEPTION: batzbakbot, added 2026-08-05. It DOES own PVCs and parking
+# it DOES destroy them. That was decided explicitly, with the loss understood and
+# accepted — details on its own line below. The rule stands for everything else. Read
+# the exception as a case where somebody said out loud that the data was disposable,
+# not as a precedent for the next stateful app.
 #
 # KEYS are Go-template identifiers: use camelCase when the Application name has a
 # hyphen (insuranceRetention <-> Application "insurance-retention"); a bare hyphenated
@@ -19,3 +25,23 @@ mlflow:             { enabled: false }   # experiment tracking + model registry 
 lakekeeper:         { enabled: false }   # Iceberg REST catalog                  (consumed only by insurance-retention)
 airflow:            { enabled: false }   # pipeline orchestrator                 (biggest single RAM reclaim)
 insuranceRetention: { enabled: false }   # FastAPI serving — REQUIRES mlflow + lakekeeper enabled
+
+# ── STATEFUL. The only entry here that LOSES DATA when parked. Read before flipping.
+#
+# Parking prunes both batzbakbot Applications, which deletes the batzbakbot namespace
+# and with it two local-path PVCs on reclaimPolicy Delete:
+#
+#   batzbakbot-state    purchase history, presence tracking, undelivered payment links.
+#                       RECONSTRUCTIBLE — the bot rebuilds it by polling.
+#   whatsapp-storages   THE WHATSAPP PAIRING (whatsapp.db) plus chat history.
+#                       NOT RECONSTRUCTIBLE. Un-parking means scanning a pairing QR on
+#                       the phone again before any notification can be delivered at all.
+#
+# Un-parking re-applies the SealedSecrets in charts/batzbakbot/, so it carries the same
+# controller-master-key pre-flight as the rest of this switchboard.
+#
+# And note what parking does NOT reset: AUTO_PURCHASE=1 lives in the app repo's own
+# manifests, so re-enabling puts a bot that RESERVES AND BUYS REAL TICKETS back in the
+# air as soon as it is paired. That is the intent, not an oversight — but it is not a
+# dry run, and there is no purchase cap.
+batzbakbot:         { enabled: false }   # Pukkelpop ticket bot — DESTROYS ITS PVCs, loses the WhatsApp pairing

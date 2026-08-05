@@ -704,35 +704,36 @@ namespace hangs in `Terminating` after a park (a finalizer stall, not data loss)
 it directly instead of reverting:
 `kubectl get ns <ns> -o json | jq '.spec.finalizers=[]' | kubectl replace --raw "/api/v1/namespaces/<ns>/finalize" -f -`
 
-**Apps that must NOT go in the switchboard, and what they do instead.** `batzbakbot`
-is the worked example. It owns two `local-path` PVCs with reclaim `Delete` —
-`batzbakbot-state` and `whatsapp-storages`, the latter holding the WhatsApp **pairing** —
-so a prune would delete both directories and cost a QR scan on a phone to undo. It also
-carries its own manifests in a separate private repo, and `apps/batzbakbot.yaml`
-deliberately patches nothing platform-side.
+### batzbakbot — the one stateful entry, and the only destructive park
 
-Its off switch is therefore a **scale-to-zero flag in the app repo**, not a prune here:
+Added to the switchboard 2026-08-05 on an explicit decision. It breaks the rule above
+and that was the point: the data was judged disposable and said to be so out loud.
 
-```yaml
-# batzbakbot repo, k8s/kustomization.yaml
-replicas:
-  - name: batzbakbot
-    count: 0        # 0 = off. The bot stops polling and stops buying.
-  - name: whatsapp
-    count: 1        # leave at 1 — see below
-```
+`batzbakbot: { enabled: false }` prunes **both** its Applications. The bootstrap owns
+the namespace, so the prune deletes the namespace and with it two `local-path` PVCs on
+reclaim `Delete`:
 
-Flip, commit, push, then sync the `batzbakbot` Application (it is manual-sync, so it will
-not move on its own). Same UX as the switchboard, same compute reclaimed — the pods and
-Chrome are gone, ~370 MiB — but the PVCs, Secrets, NetworkPolicies and pairing all stay,
-so un-parking needs no re-pairing and loses no state.
+| PVC | contents | recoverable? |
+| --- | --- | --- |
+| `batzbakbot-state` | purchase history, presence tracking, undelivered payment links | **yes** — rebuilt by polling |
+| `whatsapp-storages` | `whatsapp.db`, i.e. the WhatsApp **pairing**, plus chat history | **no** — needs a new pairing QR scanned on the phone |
 
-Do not park the `whatsapp` bridge for long. A WhatsApp multi-device companion is dropped
-by the phone after ~14 days idle, so zeroing it to reclaim the last ~70 MiB buys a
-re-pair. Parking only the bot is free.
+So un-parking is not symmetric with the MLOps four. Before any notification can be
+delivered you must re-pair at `https://whatsapp.lab.batzbak.top` (nginx basic auth) and
+register **exactly one** device — the server defaults to the single registered device,
+which is why the bot sends no `X-Device-Id`; a second device makes every notification
+400. Then verify the bot's `AUTO_PURCHASE` intent before it finds a ticket, because:
 
-The general rule this illustrates: **stateless → switchboard flag (prune); stateful →
-replica flag in its own repo (scale to zero).**
+**Parking does not disarm it.** `AUTO_PURCHASE=1` lives in the app repo's manifests, not
+here, so enabling this flag puts a bot that reserves and buys **real tickets** back in
+the air as soon as it pairs. There is no purchase cap. That is intended behaviour, not
+an oversight — but it is not a dry run.
+
+A **non-destructive** park also exists for when you only want the compute back: the app
+repo's `k8s/kustomization.yaml` carries a `replicas:` transformer, and setting
+`batzbakbot` to `count: 0` stops the pods while leaving the PVCs, Secrets and pairing
+intact. That path needs a manual sync of the `batzbakbot` Application (it is
+manual-sync). Use it for a pause; use the switchboard flag to reclaim everything.
 
 **Adding an app to the switchboard.** Only stateless, non-load-bearing apps whose state
 lives in the platform base (CNPG/MinIO) qualify. Three edits:
