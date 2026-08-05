@@ -55,3 +55,44 @@ spec:
     - hosts:
         - whatsapp.lab.batzbak.top
       secretName: wildcard-lab-tls
+---
+# /favicon.ico WITHOUT basic auth, on the same host.
+#
+# Browsers fetch the favicon as a low-priority subresource and do NOT attach the
+# Authorization header, so behind auth_basic every fetch 401s -- and each 401
+# makes the browser re-prompt. Observed 2026-08-05: nine 401s on /favicon.ico
+# while every real request (/devices, /app/info, the pairing POSTs) returned 200.
+# The symptom reads as "it keeps asking for the password", which points at the
+# credentials and is nothing to do with them.
+#
+# A separate Ingress rather than a snippet annotation: auth annotations apply per
+# Ingress object, and configuration-snippet is disabled by default in
+# ingress-nginx >= 1.9, so a snippet here would silently not apply.
+#
+# Exposes nothing: an icon on a path with no dynamic content. Exact match, so it
+# cannot shadow anything else.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: whatsapp-favicon
+  namespace: batzbakbot
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: whatsapp.lab.batzbak.top
+      http:
+        paths:
+          - path: /favicon.ico
+            pathType: Exact
+            backend:
+              service:
+                name: whatsapp
+                port:
+                  number: 3000
+  tls:
+    - hosts:
+        - whatsapp.lab.batzbak.top
+      secretName: wildcard-lab-tls
