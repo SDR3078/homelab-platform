@@ -382,7 +382,15 @@ if kubectl -n batzbakbot get deploy batzbakbot >/dev/null 2>&1; then
   echo "  5. Sync 'batzbakbot-bootstrap' in ArgoCD to publish the new Secret."
   echo "     Reloader then restarts the bot -- required, because it reads"
   echo "     config.yaml once at startup and never re-reads it."
-else
+elif kubectl -n argocd get application batzbakbot-bootstrap >/dev/null 2>&1; then
   echo "  5. The workload is not deployed yet. Sync 'batzbakbot-bootstrap' first,"
   echo "     then 'batzbakbot' when you are ready for it to start polling."
+else
+  # Neither the Deployment nor the Applications exist: this is the parked state,
+  # not a broken one. Sealing while parked is fine and even sensible -- the
+  # sealed files just sit in Git until the switchboard brings the app back.
+  echo "  5. batzbakbot is PARKED -- neither Application exists, so there is"
+  echo "     nothing to sync yet. These seals are safe in Git until you set"
+  echo "     'batzbakbot: { enabled: true }' in charts/seasonal-apps/values.yaml."
+  echo "     Then re-pair WhatsApp (step 4) before the bot finds a ticket."
 fi

@@ -3,7 +3,13 @@
 #
 # Platform glue owned in charts/batzbakbot (this ns + the three SealedSecrets);
 # the workload (PVCs/Deployments/Service/NetworkPolicies) lives in the app repo's
-# k8s/ Kustomize, deployed by apps/batzbakbot.yaml.
+# k8s/ Kustomize, deployed by the batzbakbot Application in
+# charts/seasonal-apps (gated by that switchboard's `enabled` flag).
+#
+# NOTE this Namespace is what makes parking destructive: `enabled: false` prunes
+# the bootstrap Application that owns it, and deleting a namespace deletes the
+# PVCs inside it -- including the WhatsApp pairing. That is understood and
+# accepted; `running: false` is the switch that pauses without deleting.
 #
 # One Ingress (ingress.yaml), no Certificate: whatsapp.lab.batzbak.top falls
 # inside the *.lab.batzbak.top wildcard, so it reuses the reflected

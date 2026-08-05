@@ -1,7 +1,8 @@
 {{- if .Values.batzbakbot.enabled }}
 # batzbakbot bootstrap — namespace + SealedSecrets (in-repo platform glue).
 #
-# Layered under the batzbakbot workload Application (apps/batzbakbot.yaml). Owns
+# Layered under the batzbakbot workload Application (its sibling in this chart,
+# templates/batzbakbot.yaml -- both gated by seasonal-apps' `enabled` flag). Owns
 # the cluster-side resources the app repo's Kustomize does NOT declare:
 #   - Namespace 'batzbakbot' (declared in Git so PSA 'restricted' labels are
 #     first-class, and because two owners for one Namespace is a permanent
