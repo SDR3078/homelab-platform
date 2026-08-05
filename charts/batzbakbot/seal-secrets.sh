@@ -306,26 +306,55 @@ if grep -RqE '^[[:space:]]*(stringData|data):' "$REPO_SEALED" "$GHCR_SEALED" "$C
   exit 1
 fi
 
-cat <<'EOF'
+echo
+echo "Sealed. NEXT STEPS"
+echo
+echo "  1. Review the changed files (git status), then commit + push. They are"
+echo "     encrypted to THIS cluster's controller key and are useless elsewhere."
+echo
 
-Sealed. NEXT STEPS
+# The rest is state-dependent. Printing a fixed first-run checklist on every run
+# is worse than printing nothing: it tells you to do things already done, and on
+# a re-run every one of these was already true -- which trains you to skip the
+# list entirely, including the step that still mattered.
+if kubectl -n argocd get appproject batzbakbot >/dev/null 2>&1; then
+  echo "  2. AppProject 'batzbakbot' is already applied. Nothing to do."
+else
+  echo "  2. Push charts/argocd/batzbakbot-project.yaml FIRST (or in the same push):"
+  echo "     both Applications name project: batzbakbot, and a sync against a project"
+  echo "     that does not exist yet is rejected."
+fi
+echo
 
-  1. Review the five files, then commit + push them. They are encrypted to THIS
-     cluster's controller key and are useless to anyone else.
+bot_tag="$(sed -n 's/^ *newTag: *//p' "$BOT_DIR/k8s/kustomization.yaml" 2>/dev/null | head -1)"
+if [[ -n "$bot_tag" && "$bot_tag" != "bootstrap" ]]; then
+  echo "  3. Image is built and pinned: $bot_tag. Nothing to do."
+else
+  echo "  3. Push the app repo so CI builds an image and bumps k8s/kustomization.yaml."
+  echo "     Until then the tag is 'bootstrap', which nothing publishes, and the pod"
+  echo "     ImagePullBackOffs on purpose rather than deploying something unintended."
+fi
+echo
 
-  2. Push charts/argocd/batzbakbot-project.yaml FIRST (or at least in the same
-     push): the two Applications name `project: batzbakbot`, and a sync against a
-     project that does not exist yet is rejected.
+if kubectl -n batzbakbot get ingress whatsapp >/dev/null 2>&1; then
+  echo "  4. Pair WhatsApp at https://whatsapp.lab.batzbak.top (nginx basic auth)"
+  echo "     BEFORE turning AUTO_PURCHASE on. Register EXACTLY ONE device -- the"
+  echo "     server defaults to it, which is why the bot sends no X-Device-Id; a"
+  echo "     second device makes every notification 400."
+else
+  echo "  4. Pair WhatsApp before turning AUTO_PURCHASE on. No Ingress yet, so:"
+  echo "       kubectl -n batzbakbot port-forward svc/whatsapp 3000:3000"
+  echo "     then open http://localhost:3000. Register EXACTLY ONE device."
+fi
+echo
 
-  3. The image must exist before the workload syncs. Push the app repo so its
-     CI builds and bumps k8s/kustomization.yaml — until then the tag is
-     `bootstrap`, which nothing publishes, and the pod ImagePullBackOffs on
-     purpose rather than deploying something unintended.
-
-  4. Pair WhatsApp before turning AUTO_PURCHASE on. The API is ClusterIP-only:
-       kubectl -n batzbakbot port-forward svc/whatsapp 3000:3000
-       curl -X POST localhost:3000/devices -H 'Content-Type: application/json' -d '{"name":"batzbakbot"}'
-     then open http://localhost:3000 and pair. Register EXACTLY ONE device — the
-     server defaults to it, which is why the bot sends no X-Device-Id; a second
-     device makes every notification 400.
-EOF
+# A changed config Secret only reaches the bot if something restarts it: the
+# process reads config.yaml once, at startup.
+if kubectl -n batzbakbot get deploy batzbakbot >/dev/null 2>&1; then
+  echo "  5. Sync 'batzbakbot-bootstrap' in ArgoCD to publish the new Secret."
+  echo "     Reloader then restarts the bot -- required, because it reads"
+  echo "     config.yaml once at startup and never re-reads it."
+else
+  echo "  5. The workload is not deployed yet. Sync 'batzbakbot-bootstrap' first,"
+  echo "     then 'batzbakbot' when you are ready for it to start polling."
+fi
