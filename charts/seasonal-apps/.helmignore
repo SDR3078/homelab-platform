@@ -1,0 +1,14 @@
+# Standard Helm packaging excludes.
+.DS_Store
+.git/
+.gitignore
+*.tmp
+*.bak
+*.swp
+*.orig
+
+# NOTE: unlike demo-apps there is no applications/ directory here. These
+# Application manifests carry no Helm `values:` block of their own -- their
+# sources are kustomize and a plain directory -- so they are safe to render as
+# ordinary templates, which is what lets `running` inject a replicas override
+# into one of them.

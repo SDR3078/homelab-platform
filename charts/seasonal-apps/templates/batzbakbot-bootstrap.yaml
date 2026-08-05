@@ -1,3 +1,4 @@
+{{- if .Values.batzbakbot.enabled }}
 # batzbakbot bootstrap — namespace + SealedSecrets (in-repo platform glue).
 #
 # Layered under the batzbakbot workload Application (apps/batzbakbot.yaml). Owns
@@ -51,3 +52,4 @@ spec:
         duration: 5s
         factor: 2
         maxDuration: 3m
+{{- end }}

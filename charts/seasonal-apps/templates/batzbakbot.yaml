@@ -1,3 +1,11 @@
+{{- /*
+  Rendered as an ordinary Helm template, NOT verbatim via .Files.Get the way
+  demo-apps does it. That trick exists to stop Helm parsing an upstream Helm
+  `values:` block; this Application's source is kustomize and carries no such
+  block (verified: zero `{{` in the original), so templating it is safe -- and
+  it is what lets `running: false` inject a replicas override below.
+*/ -}}
+{{- if .Values.batzbakbot.enabled }}
 # batzbakbot — watches the Pukkelpop meetup ticket exchange and can buy a ticket
 # (github.com/SDR3078/batzbakbot, PRIVATE).
 #
@@ -14,11 +22,13 @@
 #     is NOT injected here: the app repo's own manifest declares
 #     imagePullSecrets, because it is useless without it in any environment.
 #
-# NOTHING is patched platform-side. The app repo carries the full workload and
-# every cluster-specific value arrives through the wave-0 SealedSecrets, so there
-# are no JSON6902 index guards to drift. The image tag is bumped by the app
-# repo's own CI (.github/workflows/image.yaml) rewriting k8s/kustomization.yaml,
-# and that commit is what triggers the rollout.
+# EXACTLY ONE thing is patched platform-side: the replicas override below, and
+# only when `running: false`. Everything else — the full workload, every
+# cluster-specific value — comes from the app repo and the wave-0 SealedSecrets.
+# That single patch is by NAME, not by JSON6902 index, so it has no position to
+# drift against when the app repo's manifests change. The image tag is bumped by
+# the app repo's own CI (.github/workflows/image.yaml) rewriting
+# k8s/kustomization.yaml, and that commit is what triggers the rollout.
 #
 # targetRevision is MASTER, not main. The app repo predates this platform's
 # convention and its default branch is master; the CI workflow pushes there too.
@@ -43,6 +53,30 @@ spec:
     repoURL: https://github.com/SDR3078/batzbakbot.git
     targetRevision: master
     path: k8s
+{{- if not .Values.batzbakbot.running }}
+
+    # PAUSED — seasonal-apps values.yaml has `batzbakbot.running: false`.
+    #
+    # ArgoCD applies this as a kustomize replicas override on top of the app
+    # repo's k8s/ manifests, so the Deployment is reconciled to 0 and no pods
+    # are scheduled. Everything else in the namespace is left exactly as it is:
+    # both PVCs, the Secrets, the NetworkPolicies and -- the one that matters --
+    # the WhatsApp pairing in whatsapp-storages.
+    #
+    # This is the in-season pause, as opposed to `enabled: false`, which prunes
+    # the Application and takes the namespace and the pairing with it.
+    #
+    # The bridge is deliberately NOT zeroed here. It costs ~70 MiB, and a
+    # WhatsApp multi-device companion is dropped by the phone after ~14 days
+    # idle -- so keeping it running is what makes the pause cheap to undo.
+    #
+    # Remember this app is manual-sync (see syncPolicy): flipping the flag makes
+    # the Application OutOfSync, it does not stop the bot on its own. Sync it.
+    kustomize:
+      replicas:
+        - name: batzbakbot
+          count: 0
+{{- end }}
 
   destination:
     server: https://kubernetes.default.svc
@@ -70,3 +104,4 @@ spec:
         duration: 5s
         factor: 2
         maxDuration: 3m
+{{- end }}

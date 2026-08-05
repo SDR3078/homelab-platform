@@ -29,16 +29,3 @@
 ---
 {{ .Files.Get "applications/insurance-retention.yaml" }}
 {{- end }}
-{{- /*
-  batzbakbot is the one STATEFUL entry, and the only one whose park is destructive:
-  its bootstrap owns the namespace, so pruning takes the two PVCs with it — including
-  the WhatsApp pairing. Gated as a pair under one flag like the others, so the
-  namespace and its SealedSecrets can never linger after the workload that needed
-  them is gone. Read the warning block in values.yaml before enabling.
-*/ -}}
-{{- if .Values.batzbakbot.enabled }}
----
-{{ .Files.Get "applications/batzbakbot-bootstrap.yaml" }}
----
-{{ .Files.Get "applications/batzbakbot.yaml" }}
-{{- end }}

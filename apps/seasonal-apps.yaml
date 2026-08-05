@@ -1,0 +1,58 @@
+# seasonal-apps — switchboard for apps that run for part of the year.
+#
+# One Application (synced by the root app-of-apps) pointing at
+# charts/seasonal-apps, whose values.yaml carries TWO flags per entry rather
+# than demo-apps' one:
+#
+#   enabled: false  → the child Applications are not rendered, ArgoCD prunes
+#                     them, the namespace goes and ANY PVCs IN IT GO WITH IT.
+#                     Out of season.
+#   running: false  → the Applications stay and so does everything in the
+#                     namespace; only the replica count is forced to 0.
+#                     In-season pause.
+#
+# That second flag is why this chart exists separately from demo-apps. With a
+# single flag "off" can only mean "pruned", which is why demo-apps forbids
+# stateful apps outright. Entries here MAY own PVCs, because `running` lets you
+# stop one without deleting it.
+#
+# Sync-wave "1" like the other app-of-apps entries; the child Applications carry
+# their own waves (bootstrap 0, workload 1).
+#
+# Automated prune + selfHeal on THIS Application, so flipping a flag takes
+# effect without a manual sync here. Note that the children may still be
+# manual-sync in their own right — batzbakbot is, deliberately — so `running`
+# makes its Application OutOfSync rather than stopping the pods by itself.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: seasonal-apps
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/SDR3078/homelab-platform.git
+    targetRevision: main
+    path: charts/seasonal-apps
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

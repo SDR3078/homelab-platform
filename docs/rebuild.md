@@ -704,37 +704,6 @@ namespace hangs in `Terminating` after a park (a finalizer stall, not data loss)
 it directly instead of reverting:
 `kubectl get ns <ns> -o json | jq '.spec.finalizers=[]' | kubectl replace --raw "/api/v1/namespaces/<ns>/finalize" -f -`
 
-### batzbakbot — the one stateful entry, and the only destructive park
-
-Added to the switchboard 2026-08-05 on an explicit decision. It breaks the rule above
-and that was the point: the data was judged disposable and said to be so out loud.
-
-`batzbakbot: { enabled: false }` prunes **both** its Applications. The bootstrap owns
-the namespace, so the prune deletes the namespace and with it two `local-path` PVCs on
-reclaim `Delete`:
-
-| PVC | contents | recoverable? |
-| --- | --- | --- |
-| `batzbakbot-state` | purchase history, presence tracking, undelivered payment links | **yes** — rebuilt by polling |
-| `whatsapp-storages` | `whatsapp.db`, i.e. the WhatsApp **pairing**, plus chat history | **no** — needs a new pairing QR scanned on the phone |
-
-So un-parking is not symmetric with the MLOps four. Before any notification can be
-delivered you must re-pair at `https://whatsapp.lab.batzbak.top` (nginx basic auth) and
-register **exactly one** device — the server defaults to the single registered device,
-which is why the bot sends no `X-Device-Id`; a second device makes every notification
-400. Then verify the bot's `AUTO_PURCHASE` intent before it finds a ticket, because:
-
-**Parking does not disarm it.** `AUTO_PURCHASE=1` lives in the app repo's manifests, not
-here, so enabling this flag puts a bot that reserves and buys **real tickets** back in
-the air as soon as it pairs. There is no purchase cap. That is intended behaviour, not
-an oversight — but it is not a dry run.
-
-A **non-destructive** park also exists for when you only want the compute back: the app
-repo's `k8s/kustomization.yaml` carries a `replicas:` transformer, and setting
-`batzbakbot` to `count: 0` stops the pods while leaving the PVCs, Secrets and pairing
-intact. That path needs a manual sync of the `batzbakbot` Application (it is
-manual-sync). Use it for a pause; use the switchboard flag to reclaim everything.
-
 **Adding an app to the switchboard.** Only stateless, non-load-bearing apps whose state
 lives in the platform base (CNPG/MinIO) qualify. Three edits:
 1. Drop the Application manifest(s) into `charts/demo-apps/applications/` (a bootstrap
@@ -744,6 +713,73 @@ lives in the platform base (CNPG/MinIO) qualify. Three edits:
 3. Add a `{{- if .Values.<key>.enabled }} ... {{ .Files.Get "applications/<file>" }} ... {{- end }}`
    block in `charts/demo-apps/templates/demo-applications.yaml`.
 Validate with `helm template charts/demo-apps --set <key>.enabled=true` before pushing.
+
+## Parking / un-parking seasonal apps
+
+`charts/seasonal-apps/values.yaml` (rendered by `apps/seasonal-apps.yaml`) is a second
+switchboard, for apps wanted only part of the year. It exists separately from
+`demo-apps` because its entries carry **two** flags rather than one, and that difference
+is what lets a **stateful** app be parked safely:
+
+```yaml
+batzbakbot:
+  enabled: false     # prune the Applications — namespace and ALL PVCs in it deleted
+  running: true      # replicas forced to 0 when false — pods stop, everything else stays
+```
+
+With only `enabled`, "off" can only mean "pruned", which is why `demo-apps` forbids
+stateful apps outright. `running` adds a way to stop an app without deleting it. It is
+implemented as a kustomize replicas override on the child Application
+(`spec.source.kustomize.replicas`), so ArgoCD forces the count and the app's own repo
+carries no competing setting.
+
+**Which flag to reach for**
+
+| want back | flag | costs |
+| --- | --- | --- |
+| the compute, for a while | `running: false` | nothing — PVCs, Secrets and pairings survive |
+| everything, until next season | `enabled: false` | every PVC in the namespace |
+
+### batzbakbot
+
+Wanted for a few weeks each August, irrelevant the other eleven months, and it owns two
+`local-path` PVCs on reclaim `Delete`:
+
+| PVC | contents | survives `enabled: false`? |
+| --- | --- | --- |
+| `batzbakbot-state` | purchase history, presence tracking, undelivered payment links | no — but reconstructible by polling |
+| `whatsapp-storages` | `whatsapp.db`, the WhatsApp **pairing** | no, and **not reconstructible** |
+
+So the seasonal rhythm is:
+
+- **Start of August** — `enabled: true`, `running: true`, push. Then re-pair at
+  `https://whatsapp.lab.batzbak.top` (nginx basic auth), registering **exactly one**
+  device: the server defaults to the single registered device, which is why the bot
+  sends no `X-Device-Id`, and a second device makes every notification 400.
+- **Ticket bought, or between waves of a sale** — `running: false`, push, then **sync the
+  `batzbakbot` Application** (it is manual-sync, so the flag alone does not stop it).
+  Pods gone in seconds; pairing and state intact; flipping back is instant.
+- **September onwards** — `enabled: false`, push. Root prunes it within a couple of
+  minutes and the namespace, both PVCs and the pairing go with it.
+
+**Neither flag disarms it.** `AUTO_PURCHASE=1` lives in the app repo's manifests, not
+here, so an app that is `enabled` *and* `running` reserves and buys **real tickets**,
+uncapped, as soon as it is paired. There is no dry-run switch on this switchboard.
+
+For an emergency stop that does not wait on GitOps:
+`kubectl -n batzbakbot scale deploy/batzbakbot --replicas=0`. That sticks, because the
+Application is manual-sync with no selfHeal — but it is not instant either: `kill_now` is
+checked once per pass and not inside the buy loop, so a pass already underway can still
+place one more order.
+
+**Adding an app to seasonal-apps.** Unlike `demo-apps`, stateful apps qualify. Add the
+Application manifests under `charts/seasonal-apps/templates/` wrapped in
+`{{- if .Values.<key>.enabled }}`, add an `enabled`/`running` stanza to `values.yaml`,
+and — if the app should honour `running` — add the `kustomize.replicas` block under
+`spec.source` guarded by `{{- if not .Values.<key>.running }}`. Note these are ordinary
+templates, not `.Files.Get` verbatim like demo-apps; that is only safe for Applications
+carrying no Helm `values:` block of their own. Validate with
+`helm template charts/seasonal-apps --set <key>.enabled=true`.
 
 ## Lost master key
 

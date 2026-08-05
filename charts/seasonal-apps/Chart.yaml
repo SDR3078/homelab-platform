@@ -1,0 +1,12 @@
+apiVersion: v2
+name: seasonal-apps
+description: >-
+  Switchboard for apps that run for part of the year rather than continuously.
+  Two flags each, not one: `enabled` controls whether the Application exists at
+  all (false prunes it, reclaiming everything including PVCs), while `running`
+  controls whether its pods are scheduled (false stops them but keeps the
+  namespace, PVCs and any pairing intact). Unlike demo-apps, entries here MAY be
+  stateful -- which is exactly why the second flag exists.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

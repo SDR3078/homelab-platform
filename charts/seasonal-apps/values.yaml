@@ -1,0 +1,47 @@
+# ── SEASONAL-APPS SWITCHBOARD ──────────────────────────────────────────────────
+# Apps that run for part of the year, not continuously. TWO flags each, and the
+# difference between them is the whole point of this chart existing separately
+# from demo-apps:
+#
+#   enabled: false  → ArgoCD prunes the Applications. The namespace goes, and
+#                     ANY PVCs IN IT GO WITH IT. Reclaims everything.
+#                     This is the out-of-season setting.
+#
+#   running: false  → the Applications stay, the namespace, PVCs and Secrets
+#                     stay, but replicas are forced to 0 so no pods are
+#                     scheduled. Reclaims the compute and NOTHING ELSE.
+#                     This is the in-season pause.
+#
+# demo-apps has only `enabled`, and correctly forbids stateful apps: with a
+# single flag, "off" can only mean "pruned", and pruning a PVC-owning app
+# destroys data. Adding `running` is what makes a stateful app safe to park
+# here -- you can stop it without deleting it.
+#
+# `running` is implemented as a kustomize replicas override on the Application
+# (spec.source.kustomize.replicas), so it is ArgoCD forcing the count, not an
+# edit in the app's own repo. One source of truth; the app repo does not carry
+# a competing replicas setting.
+#
+# KEYS are Go-template identifiers: camelCase if the Application name is
+# hyphenated, same as demo-apps.
+# ───────────────────────────────────────────────────────────────────────────────
+
+# batzbakbot — Pukkelpop fan-to-fan ticket bot. Wanted for a few weeks each
+# August; irrelevant the other eleven months.
+#
+#   enabled: false  DESTROYS whatsapp-storages, which holds the WhatsApp
+#                   PAIRING. Turning it back on means scanning a pairing QR on
+#                   the phone before any notification can be delivered. Also
+#                   destroys batzbakbot-state, which is fine -- the bot rebuilds
+#                   that by polling.
+#
+#   running: false  Loses nothing. Use this to stop the bot mid-season: once a
+#                   ticket is bought, or between waves of a sale. Restarting is
+#                   instant and needs no re-pairing.
+#
+# NEITHER FLAG DISARMS IT. AUTO_PURCHASE=1 lives in the app repo's manifests, so
+# a bot that is enabled AND running reserves and buys REAL TICKETS, uncapped, as
+# soon as it is paired. There is no dry-run setting here.
+batzbakbot:
+  enabled: false     # out of season — torn down 2026-08-05, pairing gone
+  running: true      # what it will do once enabled; leave true so enabling actually starts it
