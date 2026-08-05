@@ -1,9 +1,24 @@
 #!/usr/bin/env bash
 #
 # seal-secrets.sh — one-shot ceremony that seals ALL FIVE batzbakbot credentials
-# into GitOps. No secret ever touches disk-plaintext, argv, or shell history:
-# every value is read from a SILENT prompt and piped straight into kubeseal.
+# into GitOps. Every value is read from a SILENT prompt, is never echoed, is
+# never written to disk in plaintext, and never reaches shell history. Each one
+# is verified against the service it belongs to BEFORE anything is sealed.
 # This script holds no secret and is safe to commit.
+#
+# KNOWN LIMITATION — values DO pass through argv. This header used to claim
+# otherwise, and the claim was simply wrong: `kubectl create secret
+# --from-literal=`, `curl -H`/`-u` and `openssl passwd` all take the value as a
+# command-line argument, and /proc/<pid>/cmdline is world-readable (mode 444,
+# and hidepid is not set), so any local user can read it for as long as the
+# command runs. Nine sites do this; grep for --from-literal to find them.
+#
+# Accepted, not overlooked: this runs on a single-user devbox where the only
+# reader is the account that just typed the value. DO NOT RUN IT ON A SHARED
+# HOST. Making the original claim true is possible -- --from-env-file=/dev/stdin,
+# `openssl passwd -stdin`, `curl -K -`, a hand-built dockerconfigjson -- and was
+# deliberately not done, because it rewrites five steps of a ceremony that works
+# and whose failure mode is a revoked token.
 #
 # Produces (encrypted; safe for the PUBLIC repo):
 #   charts/argocd/batzbakbot-repo-sealed.yaml       argocd ns     — ArgoCD clones the private repo
@@ -144,8 +159,17 @@ elif [[ -z "${GHCR_PAT:-}" ]]; then
 
   # Verify the COPIED credential can pull this image before sealing it, exactly
   # as the typed path does. Decoded inside python and never echoed.
+  #
+  # STRAIGHT INTO kubeseal, with no temp file. This used to write the whole
+  # Secret -- the GHCR token, base64 but not encrypted -- to /tmp/ghcr-copy.json
+  # and shred it two lines later. Under `set -e` any failure in between (kubeseal
+  # missing, controller unreachable, the sanity greps at the end) exited before
+  # the shred, and the EXIT trap only unsets variables, so the credential stayed
+  # in /tmp -- world-readable, because the umask here is 0022. Piping removes the
+  # window rather than cleaning up after it. pipefail is already set, so a python
+  # that exits non-zero still aborts the whole step.
   echo "      verifying it can pull ghcr.io/sdr3078/batzbakbot ..."
-  kubectl -n "$SRC_NS" get secret ghcr-pull -o json | python3 -c '
+  ghcr_sealed="$(kubectl -n "$SRC_NS" get secret ghcr-pull -o json | python3 -c '
 import base64, json, sys, urllib.request
 src = json.load(sys.stdin)
 auths = json.loads(base64.b64decode(src["data"][".dockerconfigjson"]))["auths"]["ghcr.io"]
@@ -170,11 +194,15 @@ if urllib.request.urlopen(req, timeout=20).status != 200:
 out = {"apiVersion": "v1", "kind": "Secret", "type": src["type"],
        "metadata": {"name": "ghcr-pull", "namespace": "'"$APP_NS"'"},
        "data": src["data"]}
-json.dump(out, open("/tmp/ghcr-copy.json", "w"))
-' || { echo "ERROR: the existing credential cannot pull this image. Nothing sealed." >&2; exit 1; }
+json.dump(out, sys.stdout)
+' | seal)" || { echo "ERROR: the existing credential cannot pull this image, or sealing failed. Nothing sealed." >&2; exit 1; }
+  # Held in a variable and written only on success, because `> "$GHCR_SEALED"`
+  # truncates before the pipeline runs -- so a kubeseal that fails would have
+  # destroyed a working seal on its way out, which is exactly what keep_or_die
+  # exists to prevent everywhere else. The variable holds ENCRYPTED output only.
+  printf '%s\n' "$ghcr_sealed" > "$GHCR_SEALED"
+  unset ghcr_sealed
   echo "      OK — pulled the manifest."
-  seal < /tmp/ghcr-copy.json > "$GHCR_SEALED"
-  shred -u /tmp/ghcr-copy.json 2>/dev/null || rm -f /tmp/ghcr-copy.json
   echo "      -> $GHCR_SEALED"
 else
 echo "      verifying it can actually pull this image ..."
