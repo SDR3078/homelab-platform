@@ -34,6 +34,21 @@ metadata:
     nginx.ingress.kubernetes.io/auth-type: basic
     nginx.ingress.kubernetes.io/auth-secret: whatsapp-basic-auth
     nginx.ingress.kubernetes.io/auth-realm: "batzbakbot whatsapp bridge"
+    # Throttle guessing at the gate. rate=5r/s per client IP, burst=25
+    # (ingress-nginx multiplies limit-rps by 5), which is far above one
+    # dashboard page load and far below a brute-force attempt.
+    #
+    # Defence in depth, not the control: password strength is. It is here
+    # because it costs nothing and because the LAN is FLAT -- guest Wi-Fi and
+    # IoT share the /22 with 192.168.68.50, so "LAN-only" is a wider set of
+    # devices than it sounds.
+    #
+    # It matters most for a day that has not happened yet: if this host is ever
+    # put behind cloudflared the way wardstone is, the gate becomes
+    # internet-facing and whatever password was chosen for a trusted LAN is
+    # suddenly the only thing in the way. That decision would be made in a
+    # different file, months later, by someone not rereading this one.
+    nginx.ingress.kubernetes.io/limit-rps: "5"
     # The pairing QR is a PNG and the dashboard bundle is ~1 MB; the default
     # proxy buffers are fine, but the login endpoint can sit for the full QR
     # lifetime, so do not let nginx cut it shorter than the QR is valid.
