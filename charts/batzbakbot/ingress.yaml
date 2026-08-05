@@ -70,7 +70,7 @@ spec:
 # ingress-nginx >= 1.9, so a snippet here would silently not apply.
 #
 # Exposes nothing: an icon on a path with no dynamic content. Exact match, so it
-# cannot shadow anything else.
+# is a prefix match on one filename, so it cannot shadow anything else.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -86,7 +86,13 @@ spec:
       http:
         paths:
           - path: /favicon.ico
-            pathType: Exact
+            # ImplementationSpecific, not Exact. ingress-nginx's admission
+            # webhook rejects a dot in the path for Exact/Prefix -- it restricts
+            # those to a safe character set -- and denied this outright:
+            #   "path /favicon.ico cannot be used with pathType Exact"
+            # The sync failed visibly rather than half-applying, which is the
+            # webhook doing its job.
+            pathType: ImplementationSpecific
             backend:
               service:
                 name: whatsapp
