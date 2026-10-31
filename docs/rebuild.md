@@ -25,6 +25,10 @@ You will need:
     read-only RSVPs CSV API; consumed by the wedding planner via Excel
     Power Query — only needed for rotation or master-key-loss recovery;
     sealed in Git)
+  - `homelab-platform/wedding-site-invite-token` (INVITE_TOKEN_SECRET, the
+    HMAC key behind the personal invite links — on master-key-loss recovery
+    re-seal THIS value, never a fresh one: a new value breaks every link
+    already sent and printed; sealed in Git)
   - `homelab-platform/ghcr-pull-pat` (only needed for rotation when
     expiry hits — the token itself is sealed in Git)
   - `homelab-platform/argocd-wedding-site-repo-pat` (ArgoCD's clone

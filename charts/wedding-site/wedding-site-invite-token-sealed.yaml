@@ -1,0 +1,35 @@
+# wedding-site invite-link secret
+#
+# Holds INVITE_TOKEN_SECRET, the HMAC key behind the wedding site's personal
+# invite links (/i/<token>; src/lib/invite-token.ts in the tenant repo). The
+# app checks every link against it, so changing it disables every link
+# already sent, printed invitations included. The plaintext is in the
+# password manager as 'homelab-platform/wedding-site-invite-token': on a
+# rebuild, re-seal THAT value, never a new one. The Deployment requires this
+# secret, and Reloader restarts the pod when it changes.
+#
+# Its own secret (not wedding-site-app): re-sealing anything else must never
+# risk changing this value.
+#
+# Made by the tenant repo's deploy/seal-invite-token.sh. By hand:
+#   S="$(openssl rand -base64 48)"   # or the password-manager value
+#   printf '%s' "$S" | kubectl create secret generic \
+#     wedding-site-invite-token --namespace wedding \
+#     --from-file=INVITE_TOKEN_SECRET=/dev/stdin --dry-run=client -o yaml \
+#   | kubeseal --controller-name=sealed-secrets-controller \
+#       --controller-namespace=sealed-secrets -o yaml
+# kubeseal doesn't write this header; re-prepend it when re-sealing.
+# ────────────────────────────────────────────────────────────────────────
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: wedding-site-invite-token
+  namespace: wedding
+spec:
+  encryptedData:
+    INVITE_TOKEN_SECRET: AgAXFJ/yV2peMuI+ALjqGbEDRiz4te/TunCiqr+112TzbIoGm7cyuBnXywNj+G3Qm8i9ECDotNzzXt4A4U3GE0BtxPTSTBmPf5ohAn/HoIGTLIB6iPVmNPFwF1i4LBjhRMotECaT3AtKwScLqdKacoMPXatfmqIDzZ51lNLwguG5kGzVGC6bDmbvJ5TfTvh6YfTWcy4LPwwiqdfT9DtW61mOoooYL3bqIjFF8e1PSw2orzmAQrtUkRbHIzUjz8MKjpXesmkIXSFywHsDGZ0DteFdfKJSsuSkBgLKM6UmX+0q2GEf7k4MdyH0NLTXacb2S+z1O9ehYqjZ5ij5GhgwHSup45LylqgoHCQJAjzuuJZ4PMqj38josT55B6EET56+yAbSB72/JbwwzKamV/vPhrcWQDmX15QfFzt7OEW2p998lXZODFezrLyW6s8CQ3NAbXXWTK0++V14qaFCbe1azljZkoIkq9DiPWGLC1T+ShcP9W8p01E6LYSahyMgPV0bZBLp1UoV6pgTlaGKuP7RTXH/AZrZA4xk+g6E6Psb8Y0siM+XwM0Pcu5/CYKJxfxaw6V4pAJzSdlqOdjqBw0zHaXsw0btoJLCAmKBWXlPPgVf1gitTKVtcAkV6g7jj0SNeh6luRlQuJVuFYyoADEneYd6h8nQL4H1B6KLRJhbkXBaXCUBeesectGu0F7kACu/M5M0prg47571o6t8J7o0dRK3u93roUvccNFjWQBdJX1aXKzH7fWVC2vTvwnkGCqsX6tQf81KI1bzVjcoCohjPMeF
+  template:
+    metadata:
+      name: wedding-site-invite-token
+      namespace: wedding

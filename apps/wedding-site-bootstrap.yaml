@@ -7,6 +7,8 @@
 #     so PSA labels and metadata are first-class)
 #   - SealedSecret 'wedding-site-app' (AUTH_SECRET)
 #   - SealedSecret 'wedding-site-api' (API_TOKEN for the read-only RSVP CSV API)
+#   - SealedSecret 'wedding-site-invite-token' (INVITE_TOKEN_SECRET for the
+#     personal invite links)
 #   - SealedSecret 'ghcr-pull' (dockerconfigjson for the private GHCR image)
 #
 # Split from apps/wedding-site.yaml because the chart itself lives in a
