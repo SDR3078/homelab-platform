@@ -18,8 +18,9 @@ You will need:
   - `homelab-platform/cloudflare-api-token` (only needed for rotation or
     master-key-loss recovery — the token itself is sealed in Git)
   - `homelab-platform/postgres-tenants-wedding` (the wedding-site CNPG role password)
-  - `homelab-platform/wedding-site-auth-secret` (Auth.js JWT key — only
-    needed for master-key-loss recovery; sealed in Git)
+  - `homelab-platform/wedding-site-auth-secret` (wedding-site's
+    AUTH_SECRET, Better Auth's session-cookie key — only needed for
+    master-key-loss recovery; sealed in Git)
   - `homelab-platform/wedding-site-api-token` (bearer token for the
     read-only RSVPs CSV API; consumed by the wedding planner via Excel
     Power Query — only needed for rotation or master-key-loss recovery;
@@ -431,7 +432,7 @@ Per-tenant rebuild shape (after Step 10 finishes):
    are decrypted by the controller and reflected into each tenant's
    namespace as `<tenant>-credentials`.
 
-2. **Re-seal any non-DB tenant secrets** (Auth.js secret, GHCR PAT, etc.)
+2. **Re-seal any non-DB tenant secrets** (wedding-site's AUTH_SECRET, GHCR PAT, etc.)
    if the master-key was lost. Each `*-sealed.yaml` in `charts/<app>/`
    has a full kubeseal procedure inline. Plaintext recovery inputs come
    from the password manager entries listed in Prerequisites. (DB
@@ -439,10 +440,12 @@ Per-tenant rebuild shape (after Step 10 finishes):
    needed, NOT in the tenant chart directory.)
 
 3. **First-time schema push.** Tenant chart Applications come up healthy
-   only once the tenant DB has the expected schema. For a fresh rebuild,
+   only once the tenant DB has the expected schema. wedding-site needs
+   no manual step: its chart's PreSync Job applies the versioned drizzle
+   migrations on the first sync. For a tenant without such a Job,
    port-forward into `postgres-tenants-rw` on `application-data` and
    run the tenant repo's `npm run db:push` (or migration equivalent)
-   once per tenant:
+   once:
 
    ```bash
    kubectl port-forward -n application-data svc/postgres-tenants-rw 5433:5432 &

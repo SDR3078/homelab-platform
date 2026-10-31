@@ -5,7 +5,8 @@
 # resources the chart depends on but the chart itself does not declare:
 #   - Namespace 'wedding' (declared in Git, not via CreateNamespace=true,
 #     so PSA labels and metadata are first-class)
-#   - SealedSecret 'wedding-site-app' (DATABASE_URL/AUTH_SECRET/ADMIN_USER_IDS)
+#   - SealedSecret 'wedding-site-app' (AUTH_SECRET)
+#   - SealedSecret 'wedding-site-api' (API_TOKEN for the read-only RSVP CSV API)
 #   - SealedSecret 'ghcr-pull' (dockerconfigjson for the private GHCR image)
 #
 # Split from apps/wedding-site.yaml because the chart itself lives in a
@@ -16,7 +17,7 @@
 # deployment-target-agnostic.
 #
 # Sync-wave 0 — runs before apps/wedding-site.yaml (wave 1). The chart's
-# Deployment references both SealedSecrets via envFrom + imagePullSecrets,
+# Deployment references these SealedSecrets via envFrom + imagePullSecrets,
 # so they must materialize first. The Bitnami sealed-secrets controller
 # decrypts each SealedSecret on its first reconcile, so by the time wave 1
 # starts applying the chart, the real Secrets exist in the namespace.

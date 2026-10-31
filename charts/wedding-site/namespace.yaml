@@ -40,10 +40,10 @@
 # header in postgres-tenants-cluster.yaml (one kubeseal step + one git
 # commit; CNPG and reflector handle the rest).
 #
-# Initial schema is created by the tenant repo's `npm run db:push`
-# (drizzle-kit) the first time the app rolls out, port-forwarding into
-# postgres-tenants-rw on application-data. Schema migrations stay at
-# level 1 until the tenant repo adds a drizzle migrate Job.
+# The schema comes from the tenant chart: an ArgoCD PreSync Job
+# (helm/templates/migrate-job.yaml in the tenant repo) applies the
+# versioned drizzle migrations from the app image before every sync,
+# the first one included. No manual schema step.
 # ────────────────────────────────────────────────────────────────────────
 
 apiVersion: v1

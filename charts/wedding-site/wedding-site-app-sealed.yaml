@@ -3,11 +3,12 @@
 # Holds the runtime config the wedding-site Next.js app reads via envFrom
 # (see helm/templates/deployment.yaml in the tenant repo). One key:
 #
-#   - AUTH_SECRET — Auth.js JWT signing/encryption key. Rotating it
-#     invalidates all active sessions, so it's effectively a long-lived
-#     secret. Keep in password manager under
-#     'homelab-platform/wedding-site-auth-secret' for DR (master-key-loss
-#     recovery requires regenerating from this value).
+#   - AUTH_SECRET — Better Auth's secret: src/auth.ts in the tenant repo
+#     passes it as `secret` (so it wins over a BETTER_AUTH_SECRET), and
+#     it signs the session cookie. Rotating it signs every household
+#     out, so it's effectively a long-lived secret. Keep in password
+#     manager under 'homelab-platform/wedding-site-auth-secret' for DR
+#     (master-key-loss recovery requires regenerating from this value).
 #
 # DATABASE_URL is composed at container startup via Kubernetes $(VAR)
 # substitution from the wedding-credentials secret (reflected from
@@ -17,9 +18,10 @@
 # charts/application-data/; both the CNPG-managed role and the composed
 # DATABASE_URL pick up the new value on next pod restart.
 #
-# Admin status is NOT in this secret. It lives in the users.isAdmin DB
-# column on postgres-tenants/wedding (see src/db/schema/auth.ts in the
-# tenant repo). Toggle it via SQL UPDATE — no reseal, no pod restart.
+# Admin status is NOT in this secret. It lives in the "isAdmin" column
+# of the "user" table on postgres-tenants/wedding (see
+# src/db/schema/auth.ts in the tenant repo). Toggle it via SQL UPDATE —
+# no reseal, no pod restart.
 #
 # ────────────────────────────────────────────────────────────────────────
 # OPERATIONS RUNBOOK — generating + sealing this secret from scratch
@@ -39,7 +41,7 @@
 #
 # 3. Encrypt with kubeseal — overwrites THIS file's encryptedData block:
 #
-#      kubeseal -f /tmp/wedding-site-app.yaml \
+#      kubeseal -f /tmp/wedding-site-app.yaml -o yaml \
 #        -w charts/wedding-site/wedding-site-app-sealed.yaml \
 #        --controller-name=sealed-secrets-controller \
 #        --controller-namespace=sealed-secrets
@@ -58,8 +60,8 @@
 # Rotation of AUTH_SECRET: same procedure from step 1.
 # Rotation of the DB password: reseal wedding-credentials in
 # charts/application-data/, NOT this file.
-# Admin add/remove: SQL UPDATE on users.isAdmin in postgres-tenants/wedding,
-# NOT this file.
+# Admin add/remove: UPDATE "user" SET "isAdmin" = ... in
+# postgres-tenants/wedding, NOT this file.
 # ────────────────────────────────────────────────────────────────────────
 
 ---

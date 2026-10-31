@@ -59,7 +59,7 @@
 #
 # 3. Encrypt with kubeseal — overwrites THIS file's encryptedData block:
 #
-#      kubeseal -f /tmp/ghcr-pull.yaml \
+#      kubeseal -f /tmp/ghcr-pull.yaml -o yaml \
 #        -w charts/wedding-site/ghcr-pull-sealed.yaml \
 #        --controller-name=sealed-secrets-controller \
 #        --controller-namespace=sealed-secrets

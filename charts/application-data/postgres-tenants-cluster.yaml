@@ -196,8 +196,8 @@ spec:
     storageClass: local-path
 
   # Smaller resource budget than data-platform — tenant workloads are
-  # request/response (Auth.js sessions, RSVP forms) rather than long-running
-  # ETL/training loads.
+  # request/response (Better Auth session lookups, RSVP forms) rather
+  # than long-running ETL/training loads.
   resources:
     requests:
       cpu: 100m
