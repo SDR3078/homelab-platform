@@ -9,6 +9,8 @@
 #   - SealedSecret 'wedding-site-api' (API_TOKEN for the read-only RSVP CSV API)
 #   - SealedSecret 'wedding-site-invite-token' (INVITE_TOKEN_SECRET for the
 #     personal invite links)
+#   - SealedSecret 'wedding-site-resend' (RESEND_API_KEY, the invitation
+#     worker's sending-only Resend key)
 #   - SealedSecret 'ghcr-pull' (dockerconfigjson for the private GHCR image)
 #
 # Split from apps/wedding-site.yaml because the chart itself lives in a

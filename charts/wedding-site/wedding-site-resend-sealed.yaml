@@ -1,0 +1,32 @@
+# wedding-site Resend API key
+#
+# Holds RESEND_API_KEY, which the invitation worker sends the wedding site's
+# emails with (src/worker/ in the tenant repo). A "Sending access" key
+# restricted to anna-sander.wedding: it can send from that domain and nothing
+# else, so a leaked copy can't read back the emails already sent. Nothing to
+# keep: if it's lost, make a new key in Resend and re-seal; that breaks
+# nothing. The worker reads it as an optional secret, and Reloader restarts
+# the worker when it changes.
+#
+# Made by the tenant repo's deploy/seal-resend-key.sh. By hand:
+#   read -rs KEY   # paste the key
+#   printf '%s' "$KEY" | kubectl create secret generic \
+#     wedding-site-resend --namespace wedding \
+#     --from-file=RESEND_API_KEY=/dev/stdin --dry-run=client -o yaml \
+#   | kubeseal --controller-name=sealed-secrets-controller \
+#       --controller-namespace=sealed-secrets -o yaml
+# kubeseal doesn't write this header; re-prepend it when re-sealing.
+# ────────────────────────────────────────────────────────────────────────
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: wedding-site-resend
+  namespace: wedding
+spec:
+  encryptedData:
+    RESEND_API_KEY: AgBaquiUO2j5Rzf1qAlBVkKJmv4TW0yfj5rqlYvuqcSCXHvkG3ghg9yjQcYgxNxsluL2m7xBGSCcyHZHszhS4v+aXMzXTX7JAsON7lYwA+GlDj1bnakmemuFrlnDsNtdOkGZXLYRA9D8iNqcbTI1/Xk9C8lVSDshx9qe9nGVc/C3Bvb5uwldXGL/zV2WikE67x2/B7CtFWE1/vr/uEg1Wpf2TFdf2iO8NNTpsGkT4sbWFGTonBKjPCnkFcOr55HhXcb/3RdQ4WFG1S0V5EZzl08SsBy7/mpIrv/5Z9hArW9f13erHtwQyhyLd4S5KoHxysqF1isB5p5Z2gA5nK8Y+FAzJwS6q8Jyk7qTN6B+hBYk8EmDNcgd3IuqV6WfJpiS4fFGrJzVLBEVLOkyFZKI9jsoAfeypxR90L/dydbdDBX9iMzcvJ6gmHWCWBbZFaba1Sg761tjFGLC8Z8ZDOzvwP4rEo8DFP/eqWcIg0CtxFbpYKxgZH7EbdjhVsGRmXv6l90pOb2svJ3BHRUq21ZPM3MWVT9jtfieXRH/0UniqK1j74IL0e0V+sTd8vaJH3o8bhEsngzkxEEPKRqHa0rTP2zC2dSEAs33TKMEd74VDcKG5g+MAQceb+LlIZ321yN8ftQN/1UuwAI5Sy73MMU62WErUsxJ57LVbPcLqQlpyltAqu8CnAnLikB4Ucz8bjSwDY6Fq695eC2FXhTzLRwgJB4CV+mPakubRgVVd5RCAojQzokOXRs=
+  template:
+    metadata:
+      name: wedding-site-resend
+      namespace: wedding

@@ -804,6 +804,12 @@ permanently undecryptable. Recovery:
 Lost passwords (not in password manager) are NOT recoverable — operational
 hygiene around the password manager is the only defense.
 
+One sealed file has no password-manager entry on purpose:
+`charts/wedding-site/wedding-site-resend-sealed.yaml`, the wedding-site
+worker's Resend API key. Make a new key in Resend instead (API Keys →
+"Sending access", domain `anna-sander.wedding`), seal it with the tenant
+repo's `deploy/seal-resend-key.sh`, and delete the old key in Resend.
+
 ## Restoring data from backup
 
 Cluster rebuild ≠ data restoration. To restore Postgres data from the
