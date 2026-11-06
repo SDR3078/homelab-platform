@@ -1,0 +1,36 @@
+# wedding-site WhatsApp numbers (phase 3)
+#
+# WHATSAPP_NUMBER_ANNA and WHATSAPP_NUMBER_SANDER: Anna's and Sander's own
+# WhatsApp numbers. The wedding site's admin page asks WAHA for a linking code
+# for these numbers only, and the worker checks that each linked account is
+# that phone. INVITES_WHATSAPP_ALLOWLIST: numbers for the worker's allowlist
+# mode (may be empty). Personal data, so sealed rather than in the tenant
+# repo's values. Read (optional) by the web pods and the worker; Reloader
+# restarts them when it changes. Nothing to keep: on a rebuild, re-seal.
+#
+# Made by the tenant repo's deploy/seal-whatsapp.sh. By hand:
+#   kubectl create secret generic wedding-site-whatsapp --namespace wedding \
+#     --from-env-file=/dev/stdin --dry-run=client -o yaml <<'EOF' \
+#   | kubeseal --controller-name=sealed-secrets-controller \
+#       --controller-namespace=sealed-secrets -o yaml
+#   WHATSAPP_NUMBER_ANNA=+55 …
+#   WHATSAPP_NUMBER_SANDER=+32 …
+#   INVITES_WHATSAPP_ALLOWLIST=
+#   EOF
+# kubeseal doesn't write this header; re-prepend it when re-sealing.
+# ────────────────────────────────────────────────────────────────────────
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: wedding-site-whatsapp
+  namespace: wedding
+spec:
+  encryptedData:
+    INVITES_WHATSAPP_ALLOWLIST: AgCbXQQm4TScRqzcn2QHLApeaf18caX07ieqSu71ssh1S9UIthJD8uMc0XxREGTxplf2DmrbWiln4ec+e/9SMH/3VqDKtVBmyuVDz3jl9fK7T7qdh4OM2CYg+5Z0G0xh4OC1p/yvd4BGfMFysdYwpMJEcbcQ6RG8GewaGx5/7cIU2OpXEQzP7SUEOu7OyOcdNiWl5/bxPx5DmbAfhTOX4Ub5a1e9abF9MYdjh0lZvs/SmSwls/gtibkJe+My4le2wK+24B6TQK1fliu5hXydS79YbAKITE+8CO/7QVOriK+7MunKx4CHcPsYhNM053m+z+JC83XSLgas3vKBeJRWmqEyws4FZuZ5/yx+XWYl8H8NiTGv+IAFdOmPUaTM03XZ/xNWiZZZcG7yHO5DH9XiEOawzWi47lwSSR701q0iNNqMp5KYUS7LcjbeHc6vSp/xphox2PfwNPyftlcXC5X7sfVAnJ4xcdoGs/sO/Wuih6PTVPz2gCgmXhVbNSOKgqZgUZYAJLo2DqUB9wLuShV0uzY/rhO4vk1KpA4VfbkoLuw+OFNuxeqyxIfcgoPC4eK8KoFBVdEXGENFegsIEPPEYke3yHgCw1AzyMCre9gNqKm2nK2T2tKH0um9DEH80Sy0Ccno4ovVcMja3Gx7Xm0HWUOccgTKJc8WQgnGA0cer1kSfBbfGwqTMHwr+pAVfW76x7I=
+    WHATSAPP_NUMBER_ANNA: AgAmto0C2vCpE5O38R+bYViVvwo51IkWNe2SsJ4u7uWX5g1g9D/s2LBGoVvzWQ7Llrm+9/K916Dytn21l/NzKk7lEmVJGucEBNZu2iYhafgVsTHQP1G79p6om1mY90X020Sz9QpJa81KkbaejsaF+gAUdOTV3FshSpI4F198tQmVjo93ClnXneu5/0vJLgBdTCbKRf5Df2ieJHAWc9ykj+Aw65eY2mStNqBlunlxUlnZlZiiGI0UXKdqCJdF1zEwWVW3SUtZBSbMBn637pgWUAJzFHi0GCWoOwa7vachZHDMXRPCa3X//F1uGIYDimJ0y8H1oTyCboDS6nozhQfU2z7MKV1dcRIU8BiZmijZly3s9NmfMVI13XftlZAeFa8CFbU7k+1QvpWQbC42AfmShH3tCdLFp0pUfi6WNDr6F5t7DFXWWFVJnrPFsJlXo7rTzWBnljKAJFA1m2RUAWa2GXXqMR3n3I2JM/XGq+piexsprFLK9juDyDqF+2GUkEPwszTsjz/hxgE7cB7IR0RI4Tygxg3YgqGHWlYWPOmyo6emOSRx885k8GRmdwKpLc6Fag8WN7UAuRJM9o9P6tyy+Nlbmi9/ImS49F+qImLkXTA2cRqNNzcXg6LUuh0Cri435hIX8NIXOP7jy/vOMLslPjfOn9LJh3p8KQtPpi7GZfR26D9Q1rRjQZ87fpF4psk3Wt/hIouHvEd54a4Cwcsiz2Yh
+    WHATSAPP_NUMBER_SANDER: AgCjyp5tAEKrfm2jNzxyKl+xolrZUMgsU4w2lJz25/FeRp0Grds63XhJ/n4l8NScJwzCy8YrVr3DtP9uGEMzKMZ1moGp6kGrOGu0FmmD6tBdPy/HV1XAj2PtWT3qdNlz7AvnQn5qKTdfRb40p/+5yv5mWbwqsz93qFixJSG5AHxw4s0O6+wx2k7tkK2ymNIGeRPu5EkFlpQIUyWYf1n6STh41vQaFpV0pYI/JSfUL8Ta8nUsndDr1MxnfF/2Fc5gfwA5DbWjal1vtzNibCJg+0ps009tR1GW8KQELYOajHeP7pGGFnzzu85XtVyrk5azZrF31QtEM8AijAtQhn3FI+aQzjk8rZkGLVynfwH9jRaB2SHmIp2lNy724O0UbpvWPdCXgoRd7p6tn0VqeQkFeYetw6gFyzqB6F9LYhLUwX4xL3waiYw7iXoh1T86O11PirCJ4cFe4CoITJRmorDhmGyUABX2ZqNonLefRpZ7PW3wt/ydNRt1oAZ+b2SUXvTztKv2llZpvDcADQmfg5FX/THsL7D7ySax2TW4WcLu9NQtiT/7JFmfwbEEP4GYvqwDOLlGOpdnyGnd1OzmowWnILboybMd6Eo2h5vFm79xaNqpn54R+1MMT7h6yaWZWQVQ3C7T1ArAGsWPCkP4QEEOYseW+hlyvr5PX8nxE35IVf4OH3sPdetvfd4qB76dnOzukT80TJbHpha9mP66Ay/D0Vw0
+  template:
+    metadata:
+      name: wedding-site-whatsapp
+      namespace: wedding

@@ -817,9 +817,13 @@ repo's `deploy/seal-resend-key.sh`, and delete the old key in Resend.
 
 Two more are re-made rather than restored: `waha-credentials` (the `waha`
 Postgres role's password; re-run the tenant repo's `deploy/seal-waha-db.sh`,
-CNPG sets the new password) and `wedding-site-waha-worker` (the worker's WAHA
-keys; `deploy/waha.sh keys` with the WAHA admin key). The WhatsApp sessions
-themselves live in the `waha_wedding_*` databases and come back with the data.
+CNPG sets the new password) and `wedding-site-whatsapp` (Anna's and Sander's
+WhatsApp numbers; re-run the tenant repo's `deploy/seal-whatsapp.sh`). The
+WhatsApp sessions themselves live in the `waha_wedding_*` databases and the
+site's WAHA keys in the wedding database (encrypted with a key derived from
+INVITE_TOKEN_SECRET); both come back with the data. If they don't (or that
+secret changed), use "Set up again" and "Link phone" on the wedding site's
+admin page.
 
 ## Restoring data from backup
 

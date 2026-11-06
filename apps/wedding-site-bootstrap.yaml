@@ -13,8 +13,10 @@
 #     worker's sending-only Resend key)
 #   - SealedSecret 'wedding-site-waha' (WAHA's admin key as a sha512 hash and
 #     its dashboard login; WhatsApp, phase 3)
-#   - SealedSecret 'wedding-site-waha-worker' (the worker's read+send keys for
-#     the two WAHA sessions, made after pairing)
+#   - SealedSecret 'wedding-site-whatsapp' (Anna's and Sander's own WhatsApp
+#     numbers and the WhatsApp allowlist: personal data, read by the web pods
+#     and the worker; the sessions' own WAHA keys live encrypted in the
+#     wedding database, set up from the admin page)
 #   - SealedSecret 'ghcr-pull' (dockerconfigjson for the private GHCR image)
 #
 # Split from apps/wedding-site.yaml because the chart itself lives in a
