@@ -17,6 +17,15 @@
 # (CSS, content, schema) without touching this repo, and platform
 # changes don't force a chart re-render.
 #
+# Production settings — the switches you operate (sending on/off and its
+# mode, per channel; the From address; pacing and WhatsApp's limits) live
+# below in spec.source.helm.values, not in the tenant repo: its chart ships
+# safe defaults (sending off, dry-run), so nothing can be sent unless it's
+# switched on here. Flip one with a commit to this file; the root app syncs
+# it and ArgoCD restarts the worker. This repo is public: personal data
+# (the WhatsApp numbers, any allowlist) is sealed instead
+# (charts/wedding-site/wedding-site-whatsapp-sealed.yaml).
+#
 # Sync-wave 1 — runs after apps/wedding-site-bootstrap.yaml (wave 0)
 # which provides the namespace + sealed secrets the chart's pods depend
 # on (envFrom + imagePullSecrets). On a clean cluster a brief
@@ -48,6 +57,34 @@ spec:
     path: helm
     helm:
       releaseName: wedding-site
+      # Overrides the chart's defaults (tenant repo, helm/values.yaml, which
+      # documents each setting). Maps merge key by key.
+      values: |
+        worker:
+          env:
+            # Email through Resend. dry-run renders and logs only; live sends
+            # to every household an admin sends. Live since 2026-11-05.
+            INVITES_MODE: "live"
+            # Off unless exactly "true"; while off, queued sends wait.
+            INVITES_ENABLED: "true"
+            # ola@ forwards to Sander's inbox (Cloudflare Email Routing).
+            INVITE_FROM: "Anna & Sander <ola@anna-sander.wedding>"
+            INVITE_REPLY_TO: "ola@anna-sander.wedding"
+            # At most one email every 5 s.
+            INVITE_SEND_INTERVAL_MS: "5000"
+            # WhatsApp from Anna's and Sander's own phones. The dry run worked
+            # on 2026-11-06 (a real lookup, the message rendered); live since
+            # then, with only test households in the database.
+            INVITES_WHATSAPP_ENABLED: "true"
+            INVITES_WHATSAPP_MODE: "live"
+        whatsapp:
+          # Per account in any 24 hours, failed attempts included. Start at
+          # 10; raise towards 40 once a few days went well.
+          dailyCap: 10
+          # Minutes between two messages from one account, picked at random.
+          gapMinutes: "8-15"
+          # Hours messages may go out, in the guest's own time zone.
+          window: "10-20"
 
   destination:
     server: https://kubernetes.default.svc
