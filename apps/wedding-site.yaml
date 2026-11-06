@@ -108,6 +108,14 @@ spec:
           database:
             credentialsSecret: waha-credentials
             name: waha
+          # Measured during pairing (about 160Mi idle); the limit leaves room.
+          resources:
+            requests:
+              cpu: 50m
+              memory: 192Mi
+            limits:
+              cpu: 500m
+              memory: 768Mi
         # ── Sizes ───────────────────────────────────────────────────────
         resources:
           requests:
