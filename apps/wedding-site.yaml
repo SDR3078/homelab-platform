@@ -108,7 +108,9 @@ spec:
           database:
             credentialsSecret: waha-credentials
             name: waha
-          # Measured during pairing (about 160Mi idle); the limit leaves room.
+          # Not measured yet: check with
+          #   kubectl -n wedding top pod -l app.kubernetes.io/component=waha
+          # and tighten.
           resources:
             requests:
               cpu: 50m
