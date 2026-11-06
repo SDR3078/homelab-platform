@@ -269,6 +269,19 @@ spec:
         login: true
         passwordSecret:
           name: wardstone-credentials
+      # WAHA, the wedding site's WhatsApp API (phase 3), keeps its sessions in
+      # Postgres and creates its own databases (waha_wedding,
+      # waha_wedding_<session>; Logout/Delete drops a session's), so this role
+      # alone has CREATEDB. The `waha` Database below is only its maintenance
+      # connection. Password from waha-credentials (alphanumeric: WAHA doesn't
+      # percent-decode it), reflected into `wedding`.
+      - name: waha
+        ensure: present
+        login: true
+        createdb: true
+        connectionLimit: 20
+        passwordSecret:
+          name: waha-credentials
 
 # ────────────────────────────────────────────────────────────────────────
 # Per-database resources — declarative CREATE DATABASE
@@ -296,3 +309,14 @@ spec:
     name: postgres-tenants
   name: wardstone       # actual database name (CREATE DATABASE wardstone)
   owner: wardstone      # role from managed.roles above
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: waha
+  namespace: application-data
+spec:
+  cluster:
+    name: postgres-tenants
+  name: waha            # WAHA's maintenance connection; it creates the rest
+  owner: waha           # role from managed.roles above

@@ -1,0 +1,26 @@
+# wedding-site WAHA admin key and dashboard login (phase 3, WhatsApp)
+#
+# Holds WAHA_API_KEY as sha512:<hash> (WAHA's entrypoint keeps a hashed value as
+# is), WAHA_DASHBOARD_USERNAME and WAHA_DASHBOARD_PASSWORD. Read by the WAHA pod
+# only (required). The plain admin key and the dashboard password are in the
+# password manager as 'homelab-platform/wedding-site-waha-admin-key' and
+# 'homelab-platform/wedding-site-waha-dashboard'; on a rebuild re-seal THOSE
+# values (or make new ones with the tenant repo's deploy/seal-waha.sh: the
+# sessions don't depend on them).
+# ────────────────────────────────────────────────────────────────────────
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: wedding-site-waha
+  namespace: wedding
+spec:
+  encryptedData:
+    WAHA_API_KEY: AgBq1969FPDdjdAoOGwGvV1DHvi79vtcHKGvH7DNHTvkjqiBmD9TNttp+NkzgtpUnggAbpTldkUHqmK/UmDSAqXq+q0bE6rwtf4SCwY+s2Af9svc1J9PSx422dNkRA/9cPmAF+kL2avacBIY5+yz+/4OlRSLZDAC+toe5bGLq3pGD410Ke4ZMJL0tZIwJ/Qv0VNLasF6WH5sCQ32gzmMTMNkERio9VeVP3DHnFdsN/xVTm1j2BkyBq1EjbpcyJNyZ36DJL/+p5w3n9fCKMwUYsAHAiM/4JP1T1jWWVBu7kZIb1yU4wjnOTLwzb6EO/Yx1+2tMZQ3A0R9qc6si/G5tRnzqd67mFCt8phEO/YMxCygqPU7ZhFyalWU1M8srjUvvP1pkTQ7jodT8T1P6bFytzLXiq2uOyrZwABYMqB02RwV3XYbU9qR40bi74gXk2eBejjskmch5ua8HP2l4oCLe4+26Rd1O3hXzIWIwR6S4F8/3+NFVFBmhRJGMo/IuCBxoJgM5/AtlWVj07rStYPHTpOJ2H4uVEHwQIiznXehl19t6p0Tf0CAZflsZ10fSmm8gH77NNVb4rkDrObDYQOyS3BWS7qUMA6RpegpV+8N4cj776Hfr7awbqw5YXw66kEbCnkQ7/0GT8arufznbOFrT7XtiXV+nJUS7F76maK+3eOoNzIjnZRMga+fw6P2XPoZUcTWOMXXQ2eNvjol58nfLRdmEADLWAqpWgQmlCEamJpEyJKeIj+1ZIqMuVyUf15b4c1NHl8vwvpRftW4d7br/JscWTNZlGyTMXd6XLAnt1G214X7kDA8Wl+zqYnrBNwZqnEWp5kMfdHClh27Htm0dqC+prizHnov15aQKQI8gFzQ0gaHMNJtUiE=
+    WAHA_DASHBOARD_PASSWORD: AgBcLgeP25BN30y55oK6yGpUEY38bzXmwWFWfuPzAt44y3ZuTwNvIsfXgsNQgNrYlK5gD6b6zxSMPqbO4I9FzqqiJ0rWGEr44lRW9PrKrdiLNjm2EeAnfwfc4eyCqtKQE+COIFmc9dmevnx1ru2gMqUFazqsb6eS/BQMNmrZFtr9sIS8z5JQ67i7PzG35ffR5RwIuoZVucdb2+nTaCivEHaUKSUyd7Woy7Km5gEjtt4irTtUKGIAMhKilCKUb33Q60hx13dGTPkuHyEbiKZT6tLcmXa3OMuo7sejuhbJBN2QAddZ3jA0cOPVT1P2ZF81fVODsXC7iOWY0ErDzL54J4Cc2X2zwhleDugVA3kG+/cDC/+heOcbieo2aidbP5yCpQfDKTkLD01XEXB3YcgIhaAD3J3EYFlC3pCQ9LMktXFmw5EU7BR2wdWW35Yn8RiCluzWg/aGCsOmvpX/zBPLSlxLCFmgsOUOHdBk4I3sg5A22POD1QZrTpmAaDE7ybfUWeRgXaXhWM2ChWdQeqVXpbOAubr4eIezfzdv+FJIfEywlg8srPb182MRK2Bl7xVP8rz1MJ+Jpgoo/E8P84N2VLqgsdaAaHRrMFjUOVfyg8OwJCXJHlU+ZuS/jJygMfYbVEYmTe0zdrNqY3IOcPlzJf2LQUYsR9swgTNL7Pt4Iu9orVSNcz0TYGNFrmQxjcZdE0uE4U2KduU6Cz5Ni0jDmXN7SOMXC7Z+wxM=
+    WAHA_DASHBOARD_USERNAME: AgCbGW4ARKndyE50wFgdL4ND+rjDmd08ubTcL+kbaFR+lq4BmDJFL5re0MH8PdMnvHNKOoaOauFJzBboVQ8yoVrIoO4mmdV7KcxO16/Z4B82UJ7TjlHmstQYqbnYxWbkbb9SDCbPC4PMt1+iYD1qn+l70hAdEWlbtpmprd5DVZVxZEhTGNEcY71Xaw4guQnurUpXhQE+4XUXX+norWphGARbplZraKkR/pgRaVE4clc5j+71r+lViC7X7uzNN958VZb/grqwsAsaZ9NIpuPDEsEUbsKgkQD8/1mSby2dRkOTcdNgod0l2g69Yc7Ln8DdvWnrPoOl9WOnNa+umT9hlkB8vvs0kqZtkFJIJSAa+wFxaYhr+cSEJTGUlxhj+i/ZIpEpZP4NJHyFHKiqoxzAlQdh6djYGKK2D5toL0GGpu8dsaDtcUQa/DEPHcpBCUVPA336iObSQRjLTGh5OEEngbFr4ZI1yUbjJT/vMRJq/syeXGzXG97cEI1+3lfN7Q59TbI0PKZzZJZrAk7XsKt1GoE0SSRDWMCYce8dxmAy34qrlJo73RGLBT9tUuaV212K4n+UIy/wMjR9fh75K27xAODnBkw7lrJU69uGe7NzxFBQUZkv4xDGMIo0C+zhAGnEL/MY5TtC3219AbsUgf1ynlm7DfAy/te+bvEYKEhFb0JZSnjoNBKvRIL+TqsiPorsW8PldVs93w==
+  template:
+    metadata:
+      name: wedding-site-waha
+      namespace: wedding
+    type: Opaque

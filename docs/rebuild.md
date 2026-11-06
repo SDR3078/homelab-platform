@@ -29,6 +29,11 @@ You will need:
     HMAC key behind the personal invite links — on master-key-loss recovery
     re-seal THIS value, never a fresh one: a new value breaks every link
     already sent and printed; sealed in Git)
+  - `homelab-platform/wedding-site-waha-admin-key` and
+    `homelab-platform/wedding-site-waha-dashboard` (WAHA's admin API key and
+    dashboard password, for the wedding site's WhatsApp sessions; the cluster
+    holds only the key's hash; re-seal with the tenant repo's
+    deploy/seal-waha.sh)
   - `homelab-platform/ghcr-pull-pat` (only needed for rotation when
     expiry hits — the token itself is sealed in Git)
   - `homelab-platform/argocd-wedding-site-repo-pat` (ArgoCD's clone
@@ -809,6 +814,12 @@ One sealed file has no password-manager entry on purpose:
 worker's Resend API key. Make a new key in Resend instead (API Keys →
 "Sending access", domain `anna-sander.wedding`), seal it with the tenant
 repo's `deploy/seal-resend-key.sh`, and delete the old key in Resend.
+
+Two more are re-made rather than restored: `waha-credentials` (the `waha`
+Postgres role's password; re-run the tenant repo's `deploy/seal-waha-db.sh`,
+CNPG sets the new password) and `wedding-site-waha-worker` (the worker's WAHA
+keys; `deploy/waha.sh keys` with the WAHA admin key). The WhatsApp sessions
+themselves live in the `waha_wedding_*` databases and come back with the data.
 
 ## Restoring data from backup
 
