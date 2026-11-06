@@ -17,13 +17,17 @@
 # (CSS, content, schema) without touching this repo, and platform
 # changes don't force a chart re-render.
 #
-# Production settings — the switches you operate (sending on/off and its
-# mode, per channel; the From address; pacing and WhatsApp's limits) live
-# below in spec.source.helm.values, not in the tenant repo: its chart ships
-# safe defaults (sending off, dry-run), so nothing can be sent unless it's
-# switched on here. Flip one with a commit to this file; the root app syncs
-# it and ArgoCD restarts the worker. This repo is public: personal data
-# (the WhatsApp numbers, any allowlist) is sealed instead
+# Production settings live below in spec.source.helm.values, not in the
+# tenant repo: this cluster's wiring (hosts and TLS, the public origin, the
+# database, network-policy selectors, the pull secret, WAHA's database,
+# resource sizes) and the switches you operate (sending on/off and its mode
+# per channel, the From address, pacing, WhatsApp's limits). The tenant
+# chart keeps what moves with its code (the image tag CI bumps, the
+# rollback levers, WAHA's image and privacy settings) and ships safe
+# defaults: sending off and dry-run, and no cluster wiring at all, so it
+# refuses to render without this file. Change a setting with a commit here;
+# the root app syncs it. This repo is public: personal data (the WhatsApp
+# numbers, any allowlist) is sealed instead
 # (charts/wedding-site/wedding-site-whatsapp-sealed.yaml).
 #
 # Sync-wave 1 — runs after apps/wedding-site-bootstrap.yaml (wave 0)
@@ -57,9 +61,70 @@ spec:
     path: helm
     helm:
       releaseName: wedding-site
-      # Overrides the chart's defaults (tenant repo, helm/values.yaml, which
-      # documents each setting). Maps merge key by key.
+      # Overrides the chart's defaults key by key (maps merge; lists, such as
+      # pullSecrets, replace). The tenant repo's helm/values.yaml documents
+      # each setting; what lives there and what lives here is in its
+      # deploy/README.md, "Settings". The chart refuses to render without the
+      # cluster wiring below.
       values: |
+        # ── Cluster wiring ──────────────────────────────────────────────
+        image:
+          pullSecrets:
+            - name: ghcr-pull
+        ingress:
+          className: nginx
+          # The LAN host (wildcard certificate) and the public host through
+          # the external Cloudflare Tunnel (TLS ends at Cloudflare). Change
+          # publicHost together with BETTER_AUTH_URL.
+          host: wedding.lab.batzbak.top
+          publicHost: anna-sander.wedding
+          tls:
+            enabled: true
+            secretName: wildcard-lab-tls
+        env:
+          # The public origin: Better Auth's base URL and the base of every
+          # personal invitation link.
+          BETTER_AUTH_URL: "https://anna-sander.wedding"
+        database:
+          # The CNPG tenants cluster (charts/application-data).
+          host: postgres-tenants-rw.application-data.svc.cluster.local
+          port: 5432
+          name: wedding
+          credentialsSecret: wedding-credentials
+          sslmode: require
+        networkPolicy:
+          database:
+            namespace: application-data
+            cnpgClusterName: postgres-tenants
+            port: 5432
+          dns:
+            namespace: kube-system
+            podSelector:
+              k8s-app: kube-dns
+        waha:
+          # WhatsApp (WAHA) runs for the invitation campaign; false removes it
+          # (its sessions stay in their databases).
+          enabled: true
+          database:
+            credentialsSecret: waha-credentials
+            name: waha
+        # ── Sizes ───────────────────────────────────────────────────────
+        resources:
+          requests:
+            cpu: 50m
+            memory: 192Mi
+          limits:
+            cpu: 500m
+            memory: 384Mi
+        migrations:
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+        # ── The switches you operate ─────────────────────────────────────
         worker:
           env:
             # Email through Resend. dry-run renders and logs only; live sends
@@ -77,6 +142,13 @@ spec:
             # then, with only test households in the database.
             INVITES_WHATSAPP_ENABLED: "true"
             INVITES_WHATSAPP_MODE: "live"
+          resources:
+            requests:
+              cpu: 10m
+              memory: 96Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
         whatsapp:
           # Per account in any 24 hours, failed attempts included. Start at
           # 10; raise towards 40 once a few days went well.
