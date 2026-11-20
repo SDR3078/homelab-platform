@@ -17,6 +17,8 @@
 #     numbers and the WhatsApp allowlist: personal data, read by the web pods
 #     and the worker; the sessions' own WAHA keys live encrypted in the
 #     wedding database, set up from the admin page)
+#   - SealedSecret 'wedding-site-gifts' (the bank details on the Gifts page:
+#     personal data, read optionally by the web pods)
 #   - SealedSecret 'ghcr-pull' (dockerconfigjson for the private GHCR image)
 #
 # Split from apps/wedding-site.yaml because the chart itself lives in a

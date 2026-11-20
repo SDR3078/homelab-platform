@@ -1,0 +1,37 @@
+# wedding-site bank details for the Gifts page
+#
+# GIFTS_IBAN, GIFTS_ACCOUNT_NAME (the holder's exact name), GIFTS_BIC
+# (optional): the bank transfer from Europe, with a European transfer QR code
+# per gift. GIFTS_PIX_KEY, GIFTS_PIX_NAME, GIFTS_PIX_CITY: Pix from Brazil,
+# with a Pix code per gift. Shown only to signed-in guests, never sent by
+# email or WhatsApp. Personal data, so sealed rather than in the tenant
+# repo's values. Read (optional) by the web pods; Reloader restarts them when
+# it changes. Nothing to keep: on a rebuild, re-seal.
+#
+# Made by the tenant repo's deploy/seal-gifts.sh. By hand:
+#   kubectl create secret generic wedding-site-gifts --namespace wedding \
+#     --from-env-file=/dev/stdin --dry-run=client -o yaml <<'EOF' \
+#   | kubeseal --controller-name=sealed-secrets-controller \
+#       --controller-namespace=sealed-secrets -o yaml
+#   GIFTS_IBAN=…
+#   GIFTS_ACCOUNT_NAME=…
+#   GIFTS_PIX_KEY=…
+#   GIFTS_PIX_NAME=…
+#   EOF
+# kubeseal doesn't write this header; re-prepend it when re-sealing.
+# ────────────────────────────────────────────────────────────────────────
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: wedding-site-gifts
+  namespace: wedding
+spec:
+  encryptedData:
+    GIFTS_ACCOUNT_NAME: AgBKEG3zoD6S6S+fLAP9zvgtK7zgelIZUnA4xKQ7xe5NYbEt485tgXw/AXqlsf0mGilKC5hTpycAr7wpe27dv0Aw3++sse/1X/47oAJib2qMW5HTI0nvAHjoWbLgbZGkiRxVOYN25lmDvv20IqhAUwuxnkdSJf3Hi3XqmK0C0bJ5Hk5kXOUMIr0ZeJJzMd3Btb8mz5tf2om2W+CdJYvT/uH8oxgDpY0uD8SgmYzTDk8RrUA/xKIb0ZZx6xZHI9DzN814sMKhlwvoRwoL9wzItGQci/9AjjWqrTDhrz5tIqGLXXnueZFSCx5Ctkrb6AZ5CgBfQMR/TvpwDlqZc5kgYE/ceTlaTdGMv2K3QtFXIqwRO/N2pcY2cjV1D03QwnP6Wa7WzOH0k00A/FRai1pl9ygPffL2Ck4CkhboRAEgFM188AjfRODj7xv4WpPnd46Hb2bw1xAC3vTNfzrHAMbqcOriU+PWQ8Gc2bn2C2XbX74/wJ2c7sjwfprs3bI0jqAKGIrNKsRTXgbstXUid4TrsqKkffVkP8Hdjc74NhhonYVesfpq1W+PeGkr38B+ZT9ZUVpWz87zY6tF16nbfES8aqSurxeW8V1UV/LEqW2yoInWEimpwjX3aFQKslev4gPakhWec04+DDKHv8mukeogg+nWAbG1cmO6OfPHZZwUVdpK4h2Sij/Vc9UL8Evf3u4JSkMQs5//RLZtesulDb1fPupXnysa14HnVDE=
+    GIFTS_BIC: AgDANboI4Rkjz6JKQ28wOdwVrDMTMp+r9OhO3wxWIoPvXQz7IhxvcZpmohf/NrczE+TyH++Ojm7Z+iAfNAfu5XRGqDUyRz1HLuo0H48UIf01xNeYqWycjicElY/VncEWMrtyIV30vCJDo5a5K9B15gNXOq+gT7PT67uuIa6GD9fjklgNgLceIMVByNGQFEcn9reOP1iH8XMkV7DcxyfKawLVcBu532z8swEX6QPYbC7aIjpNcDFnlOyZw8YAB9CLZeG7iGd/jykI4FsTOo0e6UY8w/FFsihNHzW74AShc2QZoN948JMtN/VOJNLhxKwdi2hABbVDSHcDB+wFNMGUaY2Rn2xdjPzwkkVAtGXsEwDGq+8VQuloqqRBH9j7TAr0Zw+Nxnl3Yse1xmQLBT5+M1B2GMWq8SN80ej5mJDEwCQyLU8DcmkFvUu1M402VhnWd3V2bvyCovG9bzTUumtQ//pQGyQJ7LJB1PgKTlQxYh64npysr9Xkh4ugYOyjBEW3UIdsEGgpvRGsIrTADpUi/nXVot88z3nN4Dq16ffi//ljjANrZ6CM0awjW/n87AnVAr9FrpPPSZhvRjEYxAqYwLpKEXPEcQdMdchmI565TgGMopH+Y2wZYM4scd/f4BGYEud7yMOc0esBN/nbr/E69AQSO++QOysPh/wEErntcwMNvQlGfAJSY3Gd33067BBkNOcF0Dk/1OPXjw==
+    GIFTS_IBAN: AgAnFcweM0+Xlxchqs50h9agp9mFuXiWtEsCMME2nBWeyIG3xknqt4hd95LebBoDOKdDybxDr3iDxecJwFRkZv+6QT8Z5goWJ0y3f38YgFSLgOCAFA/lughupZMUfjE+GIiQ8Y9m5Q3NG31PlYcD3TqOvanWuaL4nHQzsDftq+YK74l+0poFxAIIquVrvgj8zS/YeJQizvGFfexT4D0BYc+etTKhmojhHeodst1iHnyFxv/oG65Y5US09kWaIAzLJBTRYJebkGsv88YL/jZt29C8HCj75QQpr8qd0ZTWTskbymVNewDST4AOdb04efetrAkIKZkc/bqgaqcU58yTlmA+3+/Yvjm5I2qNmV4rgM2d71R+aBog4anu8/SoY0atJ9DswkuiiLHjVGBzA5YiMkgRK8BvR2qTc00BhGXxteYYsUsK/0T+uajW1LN1mZAS8IbACB2CaxpKOLhEc8ktk82c00wjaEYS1FK//eZPr5+5v84wcbZrc5gp1aWh6+g8+X1NYHiyhEHEk7shL/3NrGoFHc/us5cYcgSe/QPCWuc7Uf4fnyZ7k1pQZv5QqmYPm4/rYi7g9ByJZ34qO56kaiWFTqGZVfukG70f7wj9WhJt+87PAJsUMjA3cER/QCGEc+thudvpwETrkMRck5hbVzed5x2PeMQvHeyl4i1olcVjGujHbas5DX60HT/JMulzVJ69iJE+7cBG861O2x/4ghGz
+  template:
+    metadata:
+      name: wedding-site-gifts
+      namespace: wedding

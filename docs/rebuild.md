@@ -815,10 +815,12 @@ worker's Resend API key. Make a new key in Resend instead (API Keys →
 "Sending access", domain `anna-sander.wedding`), seal it with the tenant
 repo's `deploy/seal-resend-key.sh`, and delete the old key in Resend.
 
-Two more are re-made rather than restored: `waha-credentials` (the `waha`
+Three more are re-made rather than restored: `waha-credentials` (the `waha`
 Postgres role's password; re-run the tenant repo's `deploy/seal-waha-db.sh`,
-CNPG sets the new password) and `wedding-site-whatsapp` (Anna's and Sander's
-WhatsApp numbers; re-run the tenant repo's `deploy/seal-whatsapp.sh`). The
+CNPG sets the new password), `wedding-site-whatsapp` (Anna's and Sander's
+WhatsApp numbers; re-run the tenant repo's `deploy/seal-whatsapp.sh`) and
+`wedding-site-gifts` (the bank details for the Gifts page; re-run the tenant
+repo's `deploy/seal-gifts.sh`). The
 WhatsApp sessions themselves live in the `waha_wedding_*` databases and the
 site's WAHA keys in the wedding database (encrypted with a key derived from
 INVITE_TOKEN_SECRET); both come back with the data. If they don't (or that
